@@ -130,24 +130,40 @@ export class PianoEngine {
       this.buildGraph(this.ctx);
       // 预渲染中央音区一个锚点（约 25ms），让第一次按键不会因为现场合成而有延迟
       this.bank.prewarm((midi) => renderPianoTone(this.ctx!, midi), [69]);
+      this.ctx.onstatechange = () => this.syncState();
     }
 
-    if (this.ctx.state !== 'running') {
-      try {
-        await this.ctx.resume();
-      } catch {
-        /* 自动播放策略可能拒绝，等下一次手势再试 */
-      }
-    }
+    // 不 await：自动播放策略未放行时 resume() 会一直挂起，等待它会卡住后续状态更新
+    this.resumeContext();
 
-    const suspended = this.ctx.state !== 'running';
     this.patch({
       source: this.bank.remoteCount > 0 ? 'remote' : 'synth',
-      ready: !suspended,
-      message: suspended ? '浏览器已暂停音频，点击任意位置继续' : '内置合成音色（正在加载钢琴采样）',
+      ready: this.ctx.state === 'running',
+      message:
+        this.ctx.state === 'running' ? '内置合成音色（正在加载钢琴采样）' : '音频待启用：点击页面或按一下琴键',
     });
 
     void this.loadRemoteSamples();
+  }
+
+  private resumeContext(): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state === 'running') return;
+    void ctx.resume().catch(() => undefined);
+  }
+
+  private syncState(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state !== 'running') {
+      this.patch({ ready: false, message: '音频已暂停：点击页面或按一下琴键' });
+      return;
+    }
+    this.patch({
+      ready: true,
+      message:
+        this.bank.remoteCount > 0 ? `钢琴采样已就绪（${this.bank.remoteCount} 份）` : '内置合成音色',
+    });
   }
 
   private buildGraph(ctx: AudioContext): void {
@@ -167,26 +183,36 @@ export class PianoEngine {
   private async loadRemoteSamples(): Promise<void> {
     const ctx = this.ctx;
     if (!ctx) return;
-    this.patch({ total: this.sampleNames.length, loaded: 0, message: '正在加载钢琴采样…' });
+    const total = this.sampleNames.length;
+    this.patch({ total, loaded: 0, message: '正在加载钢琴采样…' });
 
     let loaded = 0;
-    for (const name of this.sampleNames) {
+    const loadOne = async (name: string): Promise<void> => {
       if (this.disposed) return;
       const midi = nameToMidi(name);
-      if (midi === null) continue;
+      if (midi === null) return;
       try {
         const buffer = await this.fetchSample(ctx, name);
         this.bank.set({ midi, buffer, source: 'remote' });
         loaded += 1;
-        this.patch({
-          source: 'remote',
-          loaded,
-          message: `钢琴采样 ${loaded}/${this.sampleNames.length}`,
-        });
+        this.patch({ source: 'remote', loaded, message: `钢琴采样 ${loaded}/${total}` });
       } catch {
         // 单份采样失败不影响整体，继续下一份（合成锚点仍在兜底）
       }
-    }
+    };
+
+    // 中央音区优先：先让键盘听起来是钢琴，其余并发补齐
+    const queue = [...this.sampleNames];
+    const priority = queue.splice(0, 4);
+    await Promise.all(priority.map(loadOne));
+
+    await Promise.all(
+      Array.from({ length: 4 }, async () => {
+        while (queue.length > 0 && !this.disposed) {
+          await loadOne(queue.shift() as string);
+        }
+      }),
+    );
 
     if (loaded === 0) {
       this.patch({ source: 'synth', message: '采样加载失败，当前使用内置合成音色' });
@@ -270,6 +296,8 @@ export class PianoEngine {
     const ctx = this.ctx;
     const master = this.master;
     if (!ctx || !master) return;
+    // 任何一次发声都顺手尝试解锁音频上下文（自动播放策略要求用户手势）
+    if (ctx.state !== 'running') this.resumeContext();
 
     let params;
     try {
