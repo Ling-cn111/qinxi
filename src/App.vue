@@ -20,15 +20,22 @@ const heldKeys = new Map<string, number>();
 let unsubscribeStatus: (() => void) | null = null;
 
 const statusTone = computed(() => {
-  if (status.value.source === 'remote') return 'ok';
-  if (status.value.source === 'synth') return 'warn';
+  if (status.value.source === 'autopiano') return 'ok';
+  if (status.value.source === 'salamander' || status.value.source === 'synth') return 'warn';
   return 'idle';
 });
 
 const statusLabel = computed(() => {
-  if (status.value.source === 'remote') return 'Salamander 钢琴采样';
-  if (status.value.source === 'synth') return '内置合成音色';
-  return '音频待启用';
+  switch (status.value.source) {
+    case 'autopiano':
+      return 'AutoPiano 钢琴采样';
+    case 'salamander':
+      return '降级采样（加染色）';
+    case 'synth':
+      return '内置合成音色';
+    default:
+      return '音频待启用';
+  }
 });
 
 const loadedText = computed(() =>
