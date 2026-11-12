@@ -1,0 +1,17 @@
+node_modules/
+dist/
+dist-ssr/
+coverage/
+.DS_Store
+*.local
+*.log
+.vite/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# 本地助手工作区的记忆日志，不纳入版本库
+.workbuddy/memory/
+
+# 本地需求草稿，不纳入版本库
+提示词.md
