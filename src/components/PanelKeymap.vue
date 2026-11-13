@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
 import KeyMapDiagram from './KeyMapDiagram.vue';
-import type { PianoKeyMap } from '@/keyboard/keyMap';
+import { KEYMAP_PRESETS, type PianoKeyMap, type KeymapPresetId } from '@/keyboard/keyMap';
 
 /**
- * 「键位」页：默认键位说明 + 自定义键位 + 键盘映射图。
+ * 「键位」页：方案选择 + 自定义键位 + 键盘映射图。
  *
  * 自定义流程：点「自定义键位」→ 在钢琴上点一个音 → 按下要绑定的物理键。
  * 绑定关系交给 App 处理（它持有 keyMap 与本地存储），这里只负责交互与展示。
@@ -28,12 +28,17 @@ const emit = defineEmits<{
 
 const editMode = defineModel<boolean>('editMode', { required: true });
 const mode = defineModel<'char' | 'note'>('mode', { required: true });
+const preset = defineModel<KeymapPresetId>('preset', { required: true });
 
 const confirmingReset = ref(false);
 let resetTimer: number | undefined;
 
+const activePreset = computed(
+  () => KEYMAP_PRESETS.find((item) => item.id === preset.value) ?? KEYMAP_PRESETS[0],
+);
+
 const statusText = computed(() =>
-  props.customCount > 0 ? `默认键位 · 已自定义 ${props.customCount} 处` : '默认键位 · 未自定义',
+  props.customCount > 0 ? `已自定义 ${props.customCount} 处 · 其余沿用方案` : '当前未自定义任何键位',
 );
 
 const editHint = computed(() => {
@@ -66,7 +71,6 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
       <h3 class="panel-title"><span class="panel-title__num">1</span>键位</h3>
 
       <div class="head-actions">
-        <span class="status">{{ statusText }}</span>
         <button type="button" class="ghost" :class="{ 'is-active': editMode }" @click="emit('toggleEdit')">
           {{ editMode ? '退出自定义' : '自定义键位' }}
         </button>
@@ -81,10 +85,24 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
       </div>
     </div>
 
-    <p class="panel-desc">
-      默认键位把四排字母键与数字键从低到高依次铺开：下排从 C2 起，每排接着上一排的末尾；
-      Shift + 键取该键上方的黑键，Alt + 键取下方黑键。自定义只存在本地，刷新不丢。
-    </p>
+    <div class="presets" role="radiogroup" aria-label="键位方案">
+      <button
+        v-for="item in KEYMAP_PRESETS"
+        :key="item.id"
+        type="button"
+        role="radio"
+        class="preset"
+        :aria-checked="item.id === preset"
+        :class="{ 'is-active': item.id === preset }"
+        @click="preset = item.id"
+      >
+        <span class="preset__name">{{ item.short }}</span>
+        <span class="preset__range">{{ item.range }}</span>
+      </button>
+    </div>
+
+    <p class="preset__desc">{{ activePreset.desc }}</p>
+    <p class="status">{{ statusText }}</p>
 
     <div v-if="editMode" class="editor">
       <span class="editor__dot" aria-hidden="true"></span>
@@ -120,7 +138,8 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
     </div>
 
     <p class="panel-desc panel-desc--tight">
-      演奏时对应键帽会点亮；被自定义过的音用暖色标出。黑键默认走 Shift 组合，也可以直接绑到任意键上。
+      键帽按八度着色，同一组音阶同一个颜色；演奏时点亮，被自定义过的键多一条暖色底边。
+      小键盘（<b>N1–N0</b>、<b>N+ N− N× N÷</b>）同样可以绑，标签前的 <b>N</b> 表示小键盘。
     </p>
 
     <KeyMapDiagram
@@ -151,11 +170,72 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
   gap: 10px;
 }
 
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.preset {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  background: #202020;
+  color: rgba(231, 227, 220, 0.62);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.preset:hover {
+  border-color: rgba(207, 164, 106, 0.42);
+  color: #e7e3dc;
+}
+
+.preset.is-active {
+  border-color: rgba(207, 164, 106, 0.68);
+  background: #241b12;
+  color: #e5c79a;
+}
+
+.preset__name {
+  font-size: 13px;
+}
+
+.preset__range {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: rgba(231, 227, 220, 0.32);
+}
+
+.preset.is-active .preset__range {
+  color: rgba(229, 199, 154, 0.6);
+}
+
+.preset__desc {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: #1b1b1b;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: rgba(231, 227, 220, 0.46);
+}
+
 .status {
+  margin: 10px 0 0;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11px;
   letter-spacing: 0.04em;
-  color: rgba(231, 227, 220, 0.34);
+  color: rgba(231, 227, 220, 0.3);
 }
 
 .ghost {

@@ -1,4 +1,4 @@
-import type { CustomBinding } from './keyMap';
+import { DEFAULT_KEYMAP_PRESET, isKeymapPresetId, type CustomBinding, type KeymapPresetId } from './keyMap';
 
 /**
  * 自定义键位的本地持久化。
@@ -6,6 +6,7 @@ import type { CustomBinding } from './keyMap';
  * 这样以后调整默认布局时，老用户的自定义不会跟着错位。
  */
 const STORAGE_KEY = 'qinxi:keymap:v1';
+const PRESET_KEY = 'qinxi:keymap:preset:v1';
 
 const MODIFIERS = new Set(['none', 'shift', 'alt']);
 
@@ -60,6 +61,28 @@ export function clearCustomBindings(): void {
   if (!store) return;
   try {
     store.removeItem(STORAGE_KEY);
+  } catch {
+    /* 同上 */
+  }
+}
+
+/** 选中的键位方案也要记住，否则刷新后又跳回默认那套 */
+export function loadKeymapPreset(): KeymapPresetId {
+  const store = storage();
+  if (!store) return DEFAULT_KEYMAP_PRESET;
+  try {
+    const raw = store.getItem(PRESET_KEY);
+    return isKeymapPresetId(raw) ? raw : DEFAULT_KEYMAP_PRESET;
+  } catch {
+    return DEFAULT_KEYMAP_PRESET;
+  }
+}
+
+export function saveKeymapPreset(preset: KeymapPresetId): void {
+  const store = storage();
+  if (!store) return;
+  try {
+    store.setItem(PRESET_KEY, preset);
   } catch {
     /* 同上 */
   }

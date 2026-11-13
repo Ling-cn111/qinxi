@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BASE_START_MIDI,
   charForCode,
   isBindableCode,
   PianoKeyMap,
@@ -9,7 +8,7 @@ import {
 
 describe('默认键位不受自定义影响', () => {
   it('没有自定义时仍覆盖 C2–C8 共 73 个音', () => {
-    const map = new PianoKeyMap();
+    const map = new PianoKeyMap({ preset: 'wide' });
     expect(map.customCount).toBe(0);
     expect(map.pitches).toHaveLength(73);
     expect(map.lookup('KeyG', 'none')?.pitch).toBe(60);
@@ -21,7 +20,7 @@ describe('默认键位不受自定义影响', () => {
       { code: 'KeyQ', modifier: 'none', pitch: 200 },
       { code: 'KeyW', modifier: 'none', pitch: 60.5 },
     ];
-    const map = new PianoKeyMap(BASE_START_MIDI, custom);
+    const map = new PianoKeyMap({ preset: 'wide', custom });
     expect(map.customCount).toBe(0);
     expect(map.lookup('KeyQ', 'none')?.pitch).toBe(72);
   });
@@ -29,7 +28,7 @@ describe('默认键位不受自定义影响', () => {
 
 describe('自定义绑定', () => {
   it('把白键改到别的音：原音的默认键位让出来', () => {
-    const map = new PianoKeyMap(BASE_START_MIDI, [{ code: 'KeyQ', modifier: 'none', pitch: 60 }]);
+    const map = new PianoKeyMap({ preset: 'wide', custom: [{ code: 'KeyQ', modifier: 'none', pitch: 60 }] });
     expect(map.lookup('KeyQ', 'none')?.pitch).toBe(60);
     // C4 原来的 G 键不再绑定
     expect(map.lookup('KeyG', 'none')).toBeUndefined();
@@ -40,24 +39,24 @@ describe('自定义绑定', () => {
   });
 
   it('只改 Shift 组合时，白键本体继续可用', () => {
-    const map = new PianoKeyMap(BASE_START_MIDI, [{ code: 'KeyG', modifier: 'shift', pitch: 63 }]);
+    const map = new PianoKeyMap({ preset: 'wide', custom: [{ code: 'KeyG', modifier: 'shift', pitch: 63 }] });
     expect(map.lookup('KeyG', 'none')?.pitch).toBe(60);
     expect(map.lookup('KeyG', 'shift')?.pitch).toBe(63);
     expect(map.labelFor(63)).toBe('⇧G');
   });
 
   it('同一物理键的不同修饰键互不覆盖', () => {
-    const map = new PianoKeyMap(BASE_START_MIDI, [
+    const map = new PianoKeyMap({ preset: 'wide', custom: [
       { code: 'KeyG', modifier: 'none', pitch: 60 },
       { code: 'KeyG', modifier: 'shift', pitch: 61 },
-    ]);
+    ] });
     expect(map.lookup('KeyG', 'none')?.pitch).toBe(60);
     expect(map.lookup('KeyG', 'shift')?.pitch).toBe(61);
     expect(map.customCount).toBe(2);
   });
 
   it('可以绑到默认布局之外的键（- 号键）', () => {
-    const map = new PianoKeyMap(BASE_START_MIDI, [{ code: 'Minus', modifier: 'none', pitch: 61 }]);
+    const map = new PianoKeyMap({ preset: 'wide', custom: [{ code: 'Minus', modifier: 'none', pitch: 61 }] });
     const binding = map.lookup('Minus', 'none');
     expect(binding?.pitch).toBe(61);
     expect(binding?.char).toBe('-');
@@ -67,7 +66,7 @@ describe('自定义绑定', () => {
   });
 
   it('把音绑到 Shift 组合时，标签带 ⇧ 前缀', () => {
-    const map = new PianoKeyMap(BASE_START_MIDI, [{ code: 'Minus', modifier: 'shift', pitch: 61 }]);
+    const map = new PianoKeyMap({ preset: 'wide', custom: [{ code: 'Minus', modifier: 'shift', pitch: 61 }] });
     expect(map.lookup('Minus', 'shift')?.label).toBe('⇧-');
   });
 });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   BLACK_HEIGHT_RATIO,
   buildKeyboardLayout,
@@ -10,7 +10,8 @@ import {
   type PianoViewport,
 } from '@/keyboard/layout';
 import type { PianoKeyMap } from '@/keyboard/keyMap';
-import { noteLabelFor, type NoteLabelMode } from '@/keyboard/labels';
+import { noteLabelFor, splitHint, type NoteLabelMode } from '@/keyboard/labels';
+import { colorForPitch } from '@/keyboard/octaveColors';
 
 const props = defineProps<{
   /** 当前被按下的音高集合 */
@@ -49,15 +50,16 @@ const blackStyle = (key: { left: number; width: number }) => ({
 });
 
 const noteNameOf = (pitch: number) => props.keyMap.noteNameFor(pitch);
-const charOf = (pitch: number) => props.keyMap.charFor(pitch);
-const hintOf = (pitch: number) => (props.showHints ? charOf(pitch) : undefined);
+/** 键位提示直接用绑定标签，小键盘会自带 N 前缀 */
+const hintOf = (pitch: number) => (props.showHints ? props.keyMap.labelFor(pitch) : undefined);
+const blackHint = (pitch: number) => splitHint(hintOf(pitch));
 const nameOf = (pitch: number) => noteLabelFor(pitch, props.noteMode);
-const modifierSymbol = (pitch: number) => {
-  const modifier = props.keyMap.modifierFor(pitch);
-  if (modifier === 'alt') return '⌥';
-  if (modifier === 'shift') return '⇧';
-  return '';
-};
+/** 八度配色：白键取深色版、黑键取浅色版 */
+const keyColor = (pitch: number, onBlack: boolean) => colorForPitch(pitch, onBlack);
+/** 顶盖提示：两套方案的按键习惯不同，别写死 ⇧ */
+const bandTip = computed(() =>
+  props.keyMap.presetId === 'wide' ? '⇧ 代表 shift 键' : '黑键在上一排键缝',
+);
 const pressedClass = (pitch: number) => props.pressed.has(pitch) ? 'is-pressed' : '';
 const targetClass = (pitch: number) =>
   props.editPitch === pitch ? 'is-target' : '';
@@ -109,7 +111,7 @@ defineExpose({ scrollToViewport });
     <!-- AutoPiano 顶盖：黑漆面板 + 内外双线边框 -->
     <div class="piano-band">
       <span class="piano-band__brand">琴习 QINXI</span>
-      <span class="piano-band__tip">⇧ 代表 shift 键</span>
+      <span class="piano-band__tip">{{ bandTip }}</span>
     </div>
 
     <div ref="viewportRef" class="piano-key-wrap">
@@ -127,7 +129,7 @@ defineExpose({ scrollToViewport });
           @pointercancel="emit('release', key.pitch)"
           @contextmenu.prevent
         >
-          <span class="wkey__tip">
+          <span class="wkey__tip" :style="{ color: keyColor(key.pitch, false) }">
             <span v-if="hintOf(key.pitch)" class="wkey__key">{{ hintOf(key.pitch) }}</span>
             <span v-if="nameOf(key.pitch)" class="wkey__note">{{ nameOf(key.pitch) }}</span>
           </span>
@@ -147,11 +149,11 @@ defineExpose({ scrollToViewport });
           @pointercancel="emit('release', key.pitch)"
           @contextmenu.prevent
         >
-          <span v-if="hintOf(key.pitch)" class="bkey__tip">
-            <span v-if="modifierSymbol(key.pitch)" class="bkey__mod">{{ modifierSymbol(key.pitch) }}</span>
-            <span class="bkey__char">{{ hintOf(key.pitch) }}</span>
+          <span v-if="blackHint(key.pitch)" class="bkey__tip" :style="{ color: keyColor(key.pitch, true) }">
+            <span v-if="blackHint(key.pitch)?.mod" class="bkey__mod">{{ blackHint(key.pitch)?.mod }}</span>
+            <span class="bkey__char">{{ blackHint(key.pitch)?.char }}</span>
           </span>
-          <span v-else-if="nameOf(key.pitch)" class="bkey__tip bkey__tip--name">
+          <span v-if="nameOf(key.pitch)" class="bkey__name" :style="{ color: keyColor(key.pitch, true) }">
             {{ nameOf(key.pitch) }}
           </span>
         </button>
@@ -344,14 +346,13 @@ defineExpose({ scrollToViewport });
   font-size: 13.5px;
   line-height: 1;
   letter-spacing: 0.02em;
-  color: #7f7f7f;
+  opacity: 0.62;
 }
 
 .wkey__note {
   font-size: 13.5px;
   line-height: 1;
   letter-spacing: 0.01em;
-  color: #9d9d9d;
 }
 
 /* 黑键宽约 25px，"⇧Z" 单行会顶到边框：修饰键与字符分两行 */
@@ -372,16 +373,24 @@ defineExpose({ scrollToViewport });
 
 .bkey__mod {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.46);
+  opacity: 0.55;
 }
 
 .bkey__char {
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.8);
 }
 
-.bkey__tip--name {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+.bkey__name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 9px;
+  text-align: center;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.6;
+  white-space: nowrap;
+  pointer-events: none;
 }
 </style>

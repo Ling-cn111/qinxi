@@ -5,13 +5,20 @@ import ControlDeck from '@/components/ControlDeck.vue';
 import NoteVisualizer from '@/components/NoteVisualizer.vue';
 import { PianoEngine, type EngineStatus } from '@/audio/PianoEngine';
 import {
-  BASE_START_MIDI,
   isBindableCode,
   modifierFromEvent,
   PianoKeyMap,
+  resolveBinding,
   type CustomBinding,
+  type KeymapPresetId,
 } from '@/keyboard/keyMap';
-import { clearCustomBindings, loadCustomBindings, saveCustomBindings } from '@/keyboard/customKeymap';
+import {
+  clearCustomBindings,
+  loadCustomBindings,
+  loadKeymapPreset,
+  saveCustomBindings,
+  saveKeymapPreset,
+} from '@/keyboard/customKeymap';
 import { midiToName } from '@/audio/note';
 import type { NoteLabelMode } from '@/keyboard/labels';
 import { DEFAULT_INSTRUMENT_ID } from '@/data/instruments';
@@ -21,7 +28,13 @@ import type { DeckTab } from '@/types';
 const engine = new PianoEngine();
 
 const customBindings = ref<CustomBinding[]>(loadCustomBindings());
-const keyMap = shallowRef(new PianoKeyMap(BASE_START_MIDI, customBindings.value));
+const keymapPreset = ref<KeymapPresetId>(loadKeymapPreset());
+
+function createKeyMap(): PianoKeyMap {
+  return new PianoKeyMap({ preset: keymapPreset.value, custom: customBindings.value });
+}
+
+const keyMap = shallowRef(createKeyMap());
 
 const pressed = reactive(new Set<number>());
 const status = ref<EngineStatus>(engine.status);
@@ -89,7 +102,7 @@ function flash(message: string): void {
 function applyCustomBindings(next: CustomBinding[]): void {
   customBindings.value = next;
   saveCustomBindings(next);
-  keyMap.value = new PianoKeyMap(BASE_START_MIDI, next);
+  keyMap.value = createKeyMap();
 }
 
 function startEdit(): void {
@@ -194,11 +207,11 @@ function onKeyDown(event: KeyboardEvent): void {
 
   const modifier = modifierFromEvent(event);
   if (!modifier) return;
-  const binding = keyMap.value.lookup(event.code, modifier);
+  const binding = resolveBinding(keyMap.value, event.code, modifier);
   if (!binding) return;
 
   event.preventDefault();
-  const keyId = `${modifier}:${event.code}`;
+  const keyId = `${binding.modifier}:${event.code}`;
   if (heldKeys.has(keyId)) return;
   heldKeys.set(keyId, binding.pitch);
   pressPitch(binding.pitch);
@@ -218,6 +231,13 @@ function onBlur(): void {
 
 watch(volume, (value) => {
   engine.setVolume(Math.min(1, Math.max(0, value / 100)));
+});
+
+// 换方案要重建映射表；自定义绑定原样保留
+watch(keymapPreset, (next) => {
+  saveKeymapPreset(next);
+  keyMap.value = createKeyMap();
+  editPitch.value = null;
 });
 
 onMounted(() => {
@@ -315,6 +335,7 @@ onBeforeUnmount(() => {
         v-model:volume="volume"
         v-model:diagram-mode="diagramMode"
         v-model:edit-mode="editMode"
+        v-model:preset="keymapPreset"
         :key-map="keyMap"
         :pressed="pressed"
         :edit-pitch="editPitch"

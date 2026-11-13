@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BASE_START_MIDI, modifierFromEvent, PianoKeyMap, whitePitchSequence } from '@/keyboard/keyMap';
 import { midiToName } from '@/audio/note';
 
-const keyMap = new PianoKeyMap();
+const keyMap = new PianoKeyMap({ preset: 'wide' });
 
 describe('whitePitchSequence', () => {
   it('从 C2 起连续取白键', () => {
@@ -74,7 +74,7 @@ describe('PianoKeyMap', () => {
   });
 
   it('支持自定义基准音高', () => {
-    const shifted = new PianoKeyMap(48);
+    const shifted = new PianoKeyMap({ preset: 'wide', startMidi: 48 });
     expect(shifted.baseStartMidi).toBe(48);
     expect(shifted.lookup('KeyZ', 'none')?.pitch).toBe(48);
     expect(Math.max(...shifted.pitches)).toBeLessThanOrEqual(108);

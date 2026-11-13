@@ -3,7 +3,7 @@ import PanelDisplay from './PanelDisplay.vue';
 import PanelKeymap from './PanelKeymap.vue';
 import PanelSound from './PanelSound.vue';
 import { computed } from 'vue';
-import type { PianoKeyMap } from '@/keyboard/keyMap';
+import type { KeymapPresetId, PianoKeyMap } from '@/keyboard/keyMap';
 import { findInstrument } from '@/data/instruments';
 import type { DeckTab } from '@/types';
 
@@ -33,6 +33,7 @@ const instrument = defineModel<string>('instrument', { required: true });
 const volume = defineModel<number>('volume', { required: true });
 const diagramMode = defineModel<'char' | 'note'>('diagramMode', { required: true });
 const editMode = defineModel<boolean>('editMode', { required: true });
+const preset = defineModel<KeymapPresetId>('preset', { required: true });
 
 const activeInstrument = computed(
   () => findInstrument(instrument.value)?.name ?? '未选择',
@@ -108,6 +109,7 @@ const TABS = [
         v-else
         v-model:mode="diagramMode"
         v-model:edit-mode="editMode"
+        v-model:preset="preset"
         :key-map="props.keyMap"
         :pressed="props.pressed"
         :edit-pitch="props.editPitch"
