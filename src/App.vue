@@ -51,6 +51,14 @@ function keymapStartMidi(): number {
   return target?.startPitch ?? BASE_START_MIDI;
 }
 
+/**
+ * 编辑时点到的音高是琴键上的绝对值，落盘要换回默认布局（C2 起）的坐标 ——
+ * 这样自定义键位会跟着音区一起平移，而不是留在一个绝对音高上。
+ */
+function toBasePitch(pitch: number): number {
+  return pitch - (keymapStartMidi() - BASE_START_MIDI);
+}
+
 function createKeyMap(): PianoKeyMap {
   return new PianoKeyMap({ startMidi: keymapStartMidi(), custom: customBindings.value });
 }
@@ -157,10 +165,11 @@ function toggleEdit(): void {
 function bindSelected(code: string, modifier: 'none' | 'shift' | 'alt'): void {
   const pitch = editPitch.value;
   if (pitch === null) return;
+  const base = toBasePitch(pitch);
   const next = customBindings.value.filter(
-    (item) => !(item.code === code && item.modifier === modifier) && item.pitch !== pitch,
+    (item) => !(item.code === code && item.modifier === modifier) && item.pitch !== base,
   );
-  next.push({ code, modifier, pitch });
+  next.push({ code, modifier, pitch: base });
   applyCustomBindings(next);
   flash(`已把 ${midiToName(pitch)} 绑到 ${keyMap.value.labelFor(pitch) ?? code}`);
   editPitch.value = null;
@@ -170,7 +179,8 @@ function bindSelected(code: string, modifier: 'none' | 'shift' | 'alt'): void {
 function restoreSelected(): void {
   const pitch = editPitch.value;
   if (pitch === null) return;
-  const next = customBindings.value.filter((item) => item.pitch !== pitch);
+  const base = toBasePitch(pitch);
+  const next = customBindings.value.filter((item) => item.pitch !== base);
   if (next.length === customBindings.value.length) {
     flash(`${midiToName(pitch)} 本来就是默认键位`);
     return;
@@ -192,8 +202,9 @@ function clearSelected(): void {
     flash(`${midiToName(pitch)} 已经是空置状态`);
     return;
   }
-  const next = customBindings.value.filter((item) => item.pitch !== pitch);
-  next.push({ code: null, modifier: 'none', pitch });
+  const base = toBasePitch(pitch);
+  const next = customBindings.value.filter((item) => item.pitch !== base);
+  next.push({ code: null, modifier: 'none', pitch: base });
   applyCustomBindings(next);
   flash(`${midiToName(pitch)} 已空置，不绑定任何键`);
   editPitch.value = null;

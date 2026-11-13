@@ -182,14 +182,31 @@ describe('键位跟随音区（整体平移八度）', () => {
     }
   });
 
-  it('自定义绑定是绝对音高，不跟着音区走', () => {
+  it('自定义绑定跟着音区一起平移（存的是默认布局坐标）', () => {
     const map = new PianoKeyMap({
       startMidi: 24,
       custom: [{ code: 'KeyQ', modifier: 'none', pitch: 60 }],
     });
-    // Q 被用户钉死在 C4，而不是默认的 C2（平移后 C1）
-    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(60);
+    // 存的是 C4（默认布局坐标），低音区整体降八度 → 落到 C3
+    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(48);
     expect(map.lookup('KeyZ', 'none')?.pitch).toBe(24);
+  });
+
+  it('平移后越界的自定义绑定会被丢掉，回落到默认键位', () => {
+    const map = new PianoKeyMap({
+      startMidi: 48,
+      custom: [{ code: 'KeyQ', modifier: 'none', pitch: 108 }], // C8 + 12 越界
+    });
+    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(60); // 默认 Q = C3
+  });
+
+  it('空置记录也跟着平移', () => {
+    const map = new PianoKeyMap({
+      startMidi: 24,
+      custom: [{ code: null, modifier: 'none', pitch: 36 }], // 空置 C2
+    });
+    expect(map.clearedPitches.has(24)).toBe(true);
+    expect(map.clearedPitches.has(36)).toBe(false);
   });
 
   it('平移后音名标签跟着变，键位字符不变', () => {
