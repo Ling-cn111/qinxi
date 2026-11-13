@@ -60,12 +60,14 @@ src/
   keyboard/   88 键几何布局、键盘映射表、键面标注（音名 / 唱名）
   components/ 钢琴键盘、音符频谱、控制台（页签 / 显示 / 声音 / 键位）、键盘映射图、开关、主题菜单
   theme/      外观主题（token 表、应用与持久化）
+  parser/     字符谱解析（字符表 + parseScore）
+  data/       内置示例谱面
   types/      共享类型（NoteEvent / KeyBinding / DeckTab）
 tests/        Vitest 单元测试
 docs/screenshots/  界面截图（PR 用）
 ```
 
-后续阶段会补上 `src/transport/`（权威时钟与调度）、`src/parser/`（键盘谱解析）、`src/game/`（判定引擎）、`src/data/`（内置谱面）。
+后续阶段会补上 `src/transport/`（权威时钟与调度）、`src/game/`（判定引擎）。
 
 ## 钢琴布局数值（对齐 AutoPiano）
 
@@ -157,6 +159,34 @@ docs/screenshots/  界面截图（PR 用）
 - 只在有活跃音符时跑 `requestAnimationFrame`，安静后自动停止，不空转。
 
 配色沿用项目的暖琥珀色（不用参考站的粉紫渐变，避免破坏「深灰 + 暖木 + 黑白」的配色约束）。
+
+## 谱面解析（AutoPiano 字符谱）
+
+`src/parser/scoreParser.ts` 把社区谱那种「一串键帽字符」的文本解析成 `NoteEvent[]`：
+字符按**当前键位表**取音高（不是硬编码音名），`startBeat` 由「第几个 step」直接乘出来，纯函数、不碰播放状态。
+
+| 写法 | 含义 |
+| --- | --- |
+| `g` | 按一下 G 这颗键，占 1 个 step |
+| `[gjl]` | 和弦，括号内同时按下，整组占 1 个 step |
+| `-` / `.` | 显式休止，各占 1 个 step（`---` = 3 个） |
+| `~` | 延长前一个音（和弦则延长其中所有音）1 个 step |
+| 空格 / 换行 | 一段**连续**空白算 1 个 step 的休止；谱面开头的空白不算 |
+| `//` 或 `#` 到行尾 | 注释，不占时间 |
+| `\x` | 转义，把语法符号当琴键用（`\-` = 减号键、`\[` = 左中括号键） |
+
+- 一个 step 的时值 = `stepBeats` 拍，默认 **0.5**（八分音符）；`startBeat = step × stepBeats`。
+- **连续空白只算 1 个 step**：`g   l`、`g l`、`g\n  l` 完全等价 —— 手写谱用缩进对齐不会变成一串休止。要长休止写 `-`。
+- 大写字母按 Shift 处理（社区谱用 `S` 表示黑键那类写法）；默认布局只有白键，所以大写字符会解析失败并给出提示。
+- 解析失败**不抛错**，把问题记进 `warnings`（带行列位置与原文），一个杂字符不会让整份谱报废；要严格模式传 `strict: true`，抛 `ScoreParseError`。
+- 中括号、减号、点、波浪线被语法占用，要按这几颗键得先转义。
+
+内置两首完整谱面（`src/data/scores.ts`，正文就是字符谱本身，不是 MIDI 倒推）：
+
+| 曲目 | 调性 | BPM | 说明 |
+| --- | --- | --- | --- |
+| 小星星 | C 大调 | 96 | 6 个乐句 + 结尾 C 大三和弦，演示和弦与延长 |
+| 欢乐颂 | C 大调 | 104 | 贝多芬主题，两段重复 |
 
 ## 键位：C 大调（只有白键）
 
@@ -277,6 +307,7 @@ npm run test
 - `tests/legacyTone.test.ts`：软削波曲线（端点归一、奇对称、单调、驱动量）
 - `tests/gain.test.ts`：峰值检测、逐音归一化、包络衰减时常数、总线限幅与下压曲线
 - `tests/labels.test.ts`：唱名映射（含黑键升号、跨八度）、三档音名模式、黑键提示拆行
+- `tests/scoreParser.test.ts`：字符谱解析（音高与 startBeat、空白游程、休止 / 延长 / 和弦 / 转义 / 注释、非法字符与行列定位、strict 抛错、两首内置谱的音高与总时长）
 - `tests/themes.test.ts`：外观主题（id 唯一、token 填满且与 CSS 变量一一对应、`style.css` 默认值与 stage 一致、应用 / 未知 id 回落 / 持久化）
 - `tests/keyMapCustom.test.ts`：自定义绑定与空置（覆盖默认键位、绑黑键、空置压住默认、绑定优先于空置、非法条目过滤）
 - `tests/customKeymap.test.ts`：本地持久化（缺失降级、读回一致、损坏 JSON 兜底、条目校验）
@@ -291,8 +322,8 @@ Canvas 渲染与音频节点创建不做单测，验收方式见 PR 描述中的
 | 阶段 | 内容 | 分支 | 状态 |
 | --- | --- | --- | --- |
 | 0 | 仓库与脚手架 | `main` | 完成 |
-| 1 | 自由弹奏 | `feature/free-play` | 进行中 |
-| 2 | 谱面解析与自动播放 | `feature/parser-autoplay` | 待开始 |
+| 1 | 自由弹奏 | `main` | 完成 |
+| 2 | 谱面解析与自动播放 | `feature/parser-autoplay` | 进行中（解析器已完成） |
 | 3 | 跟弹判定 | `feature/follow-play` | 待开始 |
 | 4 | 变速与上方键盘谱 | `feature/practice-tools` | 待开始 |
 | 5 | 收尾 | `feature/polish` | 待开始 |
