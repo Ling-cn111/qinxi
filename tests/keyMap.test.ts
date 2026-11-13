@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { BASE_START_MIDI, modifierFromEvent, PianoKeyMap, whitePitchSequence } from '@/keyboard/keyMap';
+import {
+  BASE_START_MIDI,
+  KEYMAP_ROWS,
+  modifierFromEvent,
+  PianoKeyMap,
+  whitePitchSequence,
+} from '@/keyboard/keyMap';
 import { midiToName } from '@/audio/note';
 
 const keyMap = new PianoKeyMap();
@@ -16,48 +22,86 @@ describe('whitePitchSequence', () => {
   });
 });
 
-describe('PianoKeyMap', () => {
-  it('映射表覆盖 C2–C8 全部 73 个音', () => {
+describe('默认布局：照给定键位表，只有白键', () => {
+  it('覆盖 C2–C7 共 36 个白键，没有任何黑键', () => {
     const pitches = keyMap.pitches;
+    expect(pitches).toHaveLength(36);
     expect(pitches[0]).toBe(36);
-    expect(pitches[pitches.length - 1]).toBe(108);
-    expect(pitches).toHaveLength(73);
-    expect(pitches).toEqual(Array.from({ length: 73 }, (_, i) => 36 + i));
+    expect(pitches[pitches.length - 1]).toBe(96);
+    for (const pitch of pitches) {
+      expect([0, 2, 4, 5, 7, 9, 11]).toContain(pitch % 12);
+    }
   });
 
-  it('下排白键从 C2 开始连续排列', () => {
+  it('下排 Z–M 是 C2–B2', () => {
     expect(keyMap.lookup('KeyZ', 'none')?.pitch).toBe(36);
     expect(keyMap.lookup('KeyX', 'none')?.pitch).toBe(38);
     expect(keyMap.lookup('KeyC', 'none')?.pitch).toBe(40);
     expect(keyMap.lookup('KeyV', 'none')?.pitch).toBe(41);
-    expect(keyMap.lookup('Slash', 'none')?.pitch).toBe(52);
+    expect(keyMap.lookup('KeyB', 'none')?.pitch).toBe(43);
+    expect(keyMap.lookup('KeyN', 'none')?.pitch).toBe(45);
+    expect(keyMap.lookup('KeyM', 'none')?.pitch).toBe(47);
+    expect(midiToName(keyMap.lookup('KeyZ', 'none')!.pitch)).toBe('C2');
   });
 
-  it('中排 a 起接续下排，g 正好是中央 C', () => {
-    expect(keyMap.lookup('KeyA', 'none')?.pitch).toBe(53);
-    const g = keyMap.lookup('KeyG', 'none');
-    expect(g?.pitch).toBe(60);
-    expect(midiToName(g!.pitch)).toBe('C4');
+  it('上排前半 Q–T 是 C3–G3，后半 Y–] 跳到 C5–B5', () => {
+    expect(keyMap.lookup('KeyQ', 'none')?.pitch).toBe(48);
+    expect(keyMap.lookup('KeyW', 'none')?.pitch).toBe(50);
+    expect(keyMap.lookup('KeyE', 'none')?.pitch).toBe(52);
+    expect(keyMap.lookup('KeyR', 'none')?.pitch).toBe(53);
+    expect(keyMap.lookup('KeyT', 'none')?.pitch).toBe(55);
+    expect(keyMap.lookup('KeyY', 'none')?.pitch).toBe(72);
+    expect(keyMap.lookup('KeyU', 'none')?.pitch).toBe(74);
+    expect(keyMap.lookup('BracketRight', 'none')?.pitch).toBe(83);
+    expect(keyMap.lookup('Backslash', 'none')).toBeUndefined();
   });
 
-  it('Shift + 左侧白键得到黑键（⇧Z = C#2）', () => {
-    const binding = keyMap.lookup('KeyZ', 'shift');
-    expect(binding?.pitch).toBe(37);
-    expect(binding?.label).toBe('⇧Z');
-    expect(keyMap.lookup('KeyK', 'shift')?.pitch).toBe(66); // F4 → F#4
-    expect(keyMap.lookup('KeyG', 'shift')?.pitch).toBe(61); // C4 → C#4
+  it("中排 D–' 接着 A3–B4", () => {
+    expect(keyMap.lookup('KeyD', 'none')?.pitch).toBe(57);
+    expect(keyMap.lookup('KeyF', 'none')?.pitch).toBe(59);
+    expect(keyMap.lookup('KeyG', 'none')?.pitch).toBe(60);
+    expect(keyMap.lookup('KeyH', 'none')?.pitch).toBe(62);
+    expect(keyMap.lookup('KeyJ', 'none')?.pitch).toBe(64);
+    expect(keyMap.lookup('KeyK', 'none')?.pitch).toBe(65);
+    expect(keyMap.lookup('KeyL', 'none')?.pitch).toBe(67);
+    expect(keyMap.lookup('Semicolon', 'none')?.pitch).toBe(69);
+    expect(keyMap.lookup('Quote', 'none')?.pitch).toBe(71);
+    expect(keyMap.lookup('KeyA', 'none')).toBeUndefined();
   });
 
-  it('E / B 上方没有黑键，Shift 组合回落到 37 与 48 之外', () => {
-    // KeyE = E3(52)，E 上方是 F，没有黑键
-    expect(keyMap.lookup('KeyE', 'shift')).toBeUndefined();
-    // KeyM = B3(59)，B 上方是 C，没有黑键
-    expect(keyMap.lookup('KeyM', 'shift')).toBeUndefined();
+  it('数字排 5–= 是 C6–C7', () => {
+    expect(keyMap.lookup('Digit5', 'none')?.pitch).toBe(84);
+    expect(keyMap.lookup('Digit6', 'none')?.pitch).toBe(86);
+    expect(keyMap.lookup('Digit9', 'none')?.pitch).toBe(91);
+    expect(keyMap.lookup('Digit0', 'none')?.pitch).toBe(93);
+    expect(keyMap.lookup('Minus', 'none')?.pitch).toBe(95);
+    expect(keyMap.lookup('Equal', 'none')?.pitch).toBe(96);
+    expect(midiToName(keyMap.lookup('Equal', 'none')!.pitch)).toBe('C7');
   });
 
-  it('Alt + 右侧白键是同义写法（⌥X 也是 C#2）', () => {
-    expect(keyMap.lookup('KeyX', 'alt')?.pitch).toBe(37);
-    expect(keyMap.labelFor(37)).toBe('⇧Z');
+  it('删掉的黑键与空闲键都不发声', () => {
+    const idle = [
+      'KeyS',
+      'Digit2',
+      'Digit3',
+      'Digit1',
+      'Digit4',
+      'Backquote',
+      'Comma',
+      'Period',
+      'Slash',
+      'Numpad5',
+    ];
+    for (const code of idle) {
+      expect(keyMap.lookup(code, 'none')).toBeUndefined();
+    }
+  });
+
+  it('通篇没有修饰键绑定，也没有黑键绑定', () => {
+    expect(keyMap.bindings.every((item) => item.modifier === 'none')).toBe(true);
+    expect(keyMap.bindings.every((item) => [0, 2, 4, 5, 7, 9, 11].includes(item.pitch % 12))).toBe(
+      true,
+    );
   });
 
   it('每个可弹音高都有展示标签', () => {
@@ -67,14 +111,13 @@ describe('PianoKeyMap', () => {
   });
 
   it('字符索引供谱面解析使用（大小写不敏感）', () => {
-    expect(keyMap.findByChar('G')?.pitch).toBe(60);
+    expect(keyMap.findByChar('G')?.pitch).toBe(60); // C4
     expect(keyMap.findByChar('g')?.pitch).toBe(60);
-    expect(keyMap.findByChar('G', 'shift')?.pitch).toBe(61);
     expect(keyMap.findByChar('#')).toBeUndefined();
   });
 
-  it('支持自定义基准音高', () => {
-    const shifted = new PianoKeyMap(48);
+  it('支持自定义基准音高（整体平移八度）', () => {
+    const shifted = new PianoKeyMap({ startMidi: 48 });
     expect(shifted.baseStartMidi).toBe(48);
     expect(shifted.lookup('KeyZ', 'none')?.pitch).toBe(48);
     expect(Math.max(...shifted.pitches)).toBeLessThanOrEqual(108);
@@ -83,6 +126,18 @@ describe('PianoKeyMap', () => {
   it('默认基准音高为 C2', () => {
     expect(BASE_START_MIDI).toBe(36);
     expect(keyMap.baseStartMidi).toBe(36);
+  });
+});
+
+describe('布局摘要（键位页文案）', () => {
+  it('五行，每行列出「键 + 音」，小键盘标为空闲', () => {
+    expect(KEYMAP_ROWS).toHaveLength(5);
+    expect(KEYMAP_ROWS[0].keys.startsWith('Z C2 · X D2')).toBe(true);
+    expect(KEYMAP_ROWS[0].range).toBe('C2–B2');
+    expect(KEYMAP_ROWS[2].keys.startsWith('Q C3 · W D3')).toBe(true);
+    expect(KEYMAP_ROWS[2].range).toBe('C3–B5');
+    expect(KEYMAP_ROWS[4].keys).toContain('空闲');
+    expect(KEYMAP_ROWS[4].range).toBe('—');
   });
 });
 

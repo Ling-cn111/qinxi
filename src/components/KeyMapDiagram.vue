@@ -2,17 +2,20 @@
 import { computed } from 'vue';
 import { midiToName } from '@/audio/note';
 import type { PianoKeyMap } from '@/keyboard/keyMap';
+import { colorForPitch } from '@/keyboard/octaveColors';
 
 /**
  * 电脑键盘映射图。
  *
- * 每排 15 个单位宽（1u = 1/15），与实际键盘的排列一致；
- * 有映射的键显示音名（或键盘字符），无映射的修饰键只显示键名并压暗；
- * 演奏时对应键帽会点亮 —— 这是"哪个键弹哪个音"的直观答案。
+ * 主键区每排 15 个单位宽（1u = 1/15），小键盘单独一列挂在右侧；
+ * 有映射的键显示音名（或键盘字符），按八度着色；无映射的修饰键压暗只留键名；
+ * 演奏时对应键帽点亮 —— 这是"哪个键弹哪个音"的直观答案。
  */
 const props = defineProps<{
   keyMap: PianoKeyMap;
   pressed: ReadonlySet<number>;
+  /** 被用户自定义过的音高，键帽上单独标色 */
+  custom: ReadonlySet<number>;
   /** 键帽主标签：键盘字符 / 音名 */
   mode: 'char' | 'note';
 }>();
@@ -99,15 +102,58 @@ const ROWS: readonly (readonly CapKey[])[] = [
   ],
 ];
 
-const labelOf = (key: CapKey): string => {
-  const binding = props.keyMap.lookup(key.code, 'none');
-  if (!binding) return key.caption;
-  return props.mode === 'char' ? binding.char.toUpperCase() : midiToName(binding.pitch);
+interface PadKey {
+  code: string;
+  caption: string;
+  col: number;
+  row: number;
+  colSpan?: number;
+  rowSpan?: number;
+}
+
+/** 小键盘：4 列 × 5 行，+ 与 ⏎ 跨两行、0 跨两列 */
+const NUMPAD: readonly PadKey[] = [
+  { code: 'NumLock', caption: 'Num', col: 1, row: 1 },
+  { code: 'NumpadDivide', caption: '÷', col: 2, row: 1 },
+  { code: 'NumpadMultiply', caption: '×', col: 3, row: 1 },
+  { code: 'NumpadSubtract', caption: '−', col: 4, row: 1 },
+  { code: 'Numpad7', caption: '7', col: 1, row: 2 },
+  { code: 'Numpad8', caption: '8', col: 2, row: 2 },
+  { code: 'Numpad9', caption: '9', col: 3, row: 2 },
+  { code: 'NumpadAdd', caption: '+', col: 4, row: 2, rowSpan: 2 },
+  { code: 'Numpad4', caption: '4', col: 1, row: 3 },
+  { code: 'Numpad5', caption: '5', col: 2, row: 3 },
+  { code: 'Numpad6', caption: '6', col: 3, row: 3 },
+  { code: 'Numpad1', caption: '1', col: 1, row: 4 },
+  { code: 'Numpad2', caption: '2', col: 2, row: 4 },
+  { code: 'Numpad3', caption: '3', col: 3, row: 4 },
+  { code: 'NumpadEnter', caption: '⏎', col: 4, row: 4, rowSpan: 2 },
+  { code: 'Numpad0', caption: '0', col: 1, row: 5, colSpan: 2 },
+  { code: 'NumpadDecimal', caption: '.', col: 3, row: 5 },
+];
+
+interface CapInfo {
+  text: string;
+  mapped: boolean;
+  custom: boolean;
+  /** 八度色；未映射时为空 */
+  color?: string;
+  pitch?: number;
+}
+
+const infoOf = (code: string, caption: string): CapInfo => {
+  const binding = props.keyMap.lookup(code, 'none');
+  if (!binding) return { text: caption, mapped: false, custom: false };
+  return {
+    text: props.mode === 'char' ? binding.char.toUpperCase() : midiToName(binding.pitch),
+    mapped: true,
+    custom: props.custom.has(binding.pitch),
+    color: colorForPitch(binding.pitch, true),
+    pitch: binding.pitch,
+  };
 };
 
-const isMapped = (key: CapKey): boolean => Boolean(props.keyMap.lookup(key.code, 'none'));
-
-/** 当前按下的音高 → 物理键位（黑键取 Shift 组合所在的键） */
+/** 当前按下的音高 → 物理键位 */
 const downCodes = computed(() => {
   const codes = new Set<string>();
   for (const pitch of props.pressed) {
@@ -117,23 +163,54 @@ const downCodes = computed(() => {
   }
   return codes;
 });
+
+const padStyle = (key: PadKey) => ({
+  gridColumn: `${key.col} / span ${key.colSpan ?? 1}`,
+  gridRow: `${key.row} / span ${key.rowSpan ?? 1}`,
+});
 </script>
 
 <template>
   <div class="kbd" role="img" aria-label="电脑键盘键位映射图">
-    <div v-for="(row, index) in ROWS" :key="index" class="kbd__row">
+    <div class="kbd__main">
+      <div v-for="(row, index) in ROWS" :key="index" class="kbd__row">
+        <span
+          v-for="key in row"
+          :key="key.code"
+          class="cap"
+          :class="{
+            'cap--mapped': infoOf(key.code, key.caption).mapped,
+            'cap--modifier': !infoOf(key.code, key.caption).mapped,
+            'cap--custom': infoOf(key.code, key.caption).custom,
+            'is-down': downCodes.has(key.code),
+          }"
+          :style="{
+            flexGrow: key.units,
+            color: downCodes.has(key.code) ? undefined : infoOf(key.code, key.caption).color,
+          }"
+        >
+          {{ infoOf(key.code, key.caption).text }}
+        </span>
+      </div>
+    </div>
+
+    <div class="kbd__numpad" role="group" aria-label="小键盘">
       <span
-        v-for="key in row"
+        v-for="key in NUMPAD"
         :key="key.code"
-        class="cap"
+        class="cap cap--pad"
         :class="{
-          'cap--mapped': isMapped(key),
-          'cap--modifier': !isMapped(key),
+          'cap--mapped': infoOf(key.code, key.caption).mapped,
+          'cap--modifier': !infoOf(key.code, key.caption).mapped,
+          'cap--custom': infoOf(key.code, key.caption).custom,
           'is-down': downCodes.has(key.code),
         }"
-        :style="{ flexGrow: key.units }"
+        :style="{
+          ...padStyle(key),
+          color: downCodes.has(key.code) ? undefined : infoOf(key.code, key.caption).color,
+        }"
       >
-        {{ labelOf(key) }}
+        {{ infoOf(key.code, key.caption).text }}
       </span>
     </div>
   </div>
@@ -142,14 +219,22 @@ const downCodes = computed(() => {
 <style scoped>
 .kbd {
   width: 100%;
-  max-width: 1040px;
+  max-width: 1180px;
   margin: 0 auto;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: stretch;
+  gap: 14px;
   padding: 16px;
   background: #1b1b1b;
   border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.kbd__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .kbd__row {
@@ -185,7 +270,14 @@ const downCodes = computed(() => {
 /* 有映射的键：键帽更亮，音名清晰可读 */
 .cap--mapped {
   background: #353535;
-  color: #ded9cf;
+}
+
+/* 被自定义过的键：底部一条暖色，和预设键位区分开 */
+.cap--custom {
+  box-shadow:
+    inset 0 -2px 0 rgba(0, 0, 0, 0.55),
+    inset 0 -1px 0 rgba(207, 164, 106, 0.7),
+    0 1px 0 rgba(0, 0, 0, 0.5);
 }
 
 .cap.is-down {
@@ -196,20 +288,43 @@ const downCodes = computed(() => {
     0 0 0 1px rgba(255, 255, 255, 0.1);
 }
 
-@media (max-width: 900px) {
+/* ---------------------------------------------------------------- 小键盘 */
+.kbd__numpad {
+  flex: 0 0 156px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(5, 1fr);
+  gap: 6px;
+  padding-left: 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.cap--pad {
+  height: auto;
+  font-size: 10.5px;
+}
+
+@media (max-width: 1080px) {
   .kbd {
-    padding: 10px;
-    gap: 4px;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
   }
 
-  .kbd__row {
-    gap: 3px;
+  .kbd__numpad {
+    flex: 0 0 auto;
+    width: 190px;
+    align-self: flex-end;
+    grid-template-rows: repeat(5, 30px);
+    padding-left: 0;
+    padding-top: 10px;
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
   }
 
   .cap {
-    height: 26px;
-    font-size: 9.5px;
-    border-radius: 4px;
+    height: 28px;
+    font-size: 10px;
   }
 }
 </style>

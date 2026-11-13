@@ -1,9 +1,29 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
 import PianoKeyboard from '@/components/PianoKeyboard.vue';
 import ControlDeck from '@/components/ControlDeck.vue';
+import NoteVisualizer from '@/components/NoteVisualizer.vue';
 import { PianoEngine, type EngineStatus } from '@/audio/PianoEngine';
-import { getKeyMap, modifierFromEvent } from '@/keyboard/keyMap';
+import {
+  isBindableCode,
+  modifierFromEvent,
+  PianoKeyMap,
+  resolveBinding,
+  type CustomBinding,
+} from '@/keyboard/keyMap';
+import {
+  clearCustomBindings,
+  loadCustomBindings,
+  saveCustomBindings,
+} from '@/keyboard/customKeymap';
+import {
+  bindingsSignature,
+  loadKeymapSchemes,
+  MAX_SCHEME_NAME,
+  newSchemeId,
+  saveKeymapSchemes,
+  type KeymapScheme,
+} from '@/keyboard/keymapSchemes';
 import { midiToName } from '@/audio/note';
 import type { NoteLabelMode } from '@/keyboard/labels';
 import { DEFAULT_INSTRUMENT_ID } from '@/data/instruments';
@@ -11,13 +31,34 @@ import { DEFAULT_VIEWPORT_ID, PIANO_VIEWPORTS, type PianoViewport } from '@/keyb
 import type { DeckTab } from '@/types';
 
 const engine = new PianoEngine();
-const keyMap = getKeyMap();
+
+const customBindings = ref<CustomBinding[]>(loadCustomBindings());
+const schemes = ref<KeymapScheme[]>(loadKeymapSchemes());
+
+function createKeyMap(): PianoKeyMap {
+  return new PianoKeyMap({ custom: customBindings.value });
+}
+
+const keyMap = shallowRef(createKeyMap());
+
+/**
+ * 当前键位对应哪个方案：把改动列表拼成签名，和每个方案比一次。
+ * 这样无论从哪条路径改键位（绑定 / 空置 / 恢复），标签高亮都自动正确，
+ * 也不需要额外存「上次应用了哪个方案」。
+ */
+const activeSchemeId = computed<string | null>(() => {
+  const current = bindingsSignature(customBindings.value);
+  const hit = schemes.value.find((item) => bindingsSignature(item.bindings) === current);
+  if (hit) return hit.id;
+  return current === '' ? 'default' : null;
+});
 
 const pressed = reactive(new Set<number>());
 const status = ref<EngineStatus>(engine.status);
 const volume = ref(100);
 const viewportId = ref<PianoViewport['id']>(DEFAULT_VIEWPORT_ID);
 const recent = ref<string[]>([]);
+const visualizer = ref<InstanceType<typeof NoteVisualizer> | null>(null);
 
 // 控制台状态
 const deckTab = ref<DeckTab>('display');
@@ -25,14 +66,21 @@ const showHints = ref(true);
 const showNoteNames = ref(true);
 const showSolfege = ref(false);
 const instrument = ref(DEFAULT_INSTRUMENT_ID);
-const keymapPreset = ref('autopiano');
 const diagramMode = ref<'char' | 'note'>('note');
+
+// 自定义键位
+const editMode = ref(false);
+const editPitch = ref<number | null>(null);
+const lastAction = ref('');
+let lastActionTimer: number | undefined;
 
 const noteMode = computed<NoteLabelMode>(() => {
   if (showSolfege.value) return 'solfege';
   if (showNoteNames.value) return 'note';
   return 'none';
 });
+
+const customCount = computed(() => keyMap.value.customCount);
 
 /** 记录物理按键当前锁定的音高，避免 Shift 状态变化导致"松不掉" */
 const heldKeys = new Map<string, number>();
@@ -60,11 +108,157 @@ const currentViewport = computed(
   () => PIANO_VIEWPORTS.find((item) => item.id === viewportId.value) ?? PIANO_VIEWPORTS[1],
 );
 
+function flash(message: string): void {
+  lastAction.value = message;
+  window.clearTimeout(lastActionTimer);
+  lastActionTimer = window.setTimeout(() => {
+    lastAction.value = '';
+  }, 4000);
+}
+
+function applyCustomBindings(next: CustomBinding[]): void {
+  customBindings.value = next;
+  saveCustomBindings(next);
+  keyMap.value = createKeyMap();
+}
+
+function startEdit(): void {
+  editMode.value = true;
+  editPitch.value = null;
+  lastAction.value = '';
+}
+
+function exitEdit(): void {
+  editMode.value = false;
+  editPitch.value = null;
+}
+
+function toggleEdit(): void {
+  if (editMode.value) exitEdit();
+  else startEdit();
+}
+
+/** 把当前选中的音绑到某个物理键上：同一个键、同一个音都只保留一条 */
+function bindSelected(code: string, modifier: 'none' | 'shift' | 'alt'): void {
+  const pitch = editPitch.value;
+  if (pitch === null) return;
+  const next = customBindings.value.filter(
+    (item) => !(item.code === code && item.modifier === modifier) && item.pitch !== pitch,
+  );
+  next.push({ code, modifier, pitch });
+  applyCustomBindings(next);
+  flash(`已把 ${midiToName(pitch)} 绑到 ${keyMap.value.labelFor(pitch) ?? code}`);
+  editPitch.value = null;
+}
+
+/** 取消该音的自定义，回到默认键位 */
+function restoreSelected(): void {
+  const pitch = editPitch.value;
+  if (pitch === null) return;
+  const next = customBindings.value.filter((item) => item.pitch !== pitch);
+  if (next.length === customBindings.value.length) {
+    flash(`${midiToName(pitch)} 本来就是默认键位`);
+    return;
+  }
+  applyCustomBindings(next);
+  flash(`${midiToName(pitch)} 已恢复默认键位`);
+}
+
+/**
+ * 空置：这个音不绑任何键。
+ *
+ * 默认布局里它本来有键，所以要写一条「空置」记录压住默认绑定；
+ * 这条记录同样要落盘，否则刷新之后键位又回来了。
+ */
+function clearSelected(): void {
+  const pitch = editPitch.value;
+  if (pitch === null) return;
+  if (keyMap.value.clearedPitches.has(pitch) && keyMap.value.bindingsForPitch(pitch).length === 0) {
+    flash(`${midiToName(pitch)} 已经是空置状态`);
+    return;
+  }
+  const next = customBindings.value.filter((item) => item.pitch !== pitch);
+  next.push({ code: null, modifier: 'none', pitch });
+  applyCustomBindings(next);
+  flash(`${midiToName(pitch)} 已空置，不绑定任何键`);
+  editPitch.value = null;
+}
+
+function resetBindings(): void {
+  clearCustomBindings();
+  applyCustomBindings([]);
+  editPitch.value = null;
+  flash('已恢复全部默认键位，空置的音也一并恢复');
+}
+
+/** 应用方案：`default` 是内置的 C 大调，其余是保存过的快照 */
+function applyScheme(id: string): void {
+  if (id === 'default') {
+    if (customBindings.value.length === 0) {
+      flash('当前就是「C大调」默认键位');
+      return;
+    }
+    applyCustomBindings([]);
+    editPitch.value = null;
+    flash('已切回「C大调」默认键位');
+    return;
+  }
+  const scheme = schemes.value.find((item) => item.id === id);
+  if (!scheme) return;
+  applyCustomBindings(scheme.bindings.map((item) => ({ ...item })));
+  editPitch.value = null;
+  flash(`已应用方案「${scheme.name}」`);
+}
+
+/** 把当前键位存成一个具名方案（只存与默认布局不同的条目） */
+function saveScheme(rawName: string): void {
+  // 内容没变化就不新增：默认布局、或与某个已存方案完全一致
+  const signature = bindingsSignature(customBindings.value);
+  if (signature === '') {
+    flash('当前就是「C大调」默认键位，未新增');
+    return;
+  }
+  const same = schemes.value.find((item) => bindingsSignature(item.bindings) === signature);
+  if (same) {
+    flash(`与「${same.name}」内容相同，未新增`);
+    return;
+  }
+
+  const name = rawName.trim().slice(0, MAX_SCHEME_NAME);
+  if (!name) {
+    flash('方案名不能为空');
+    return;
+  }
+  if (schemes.value.some((item) => item.name === name)) {
+    flash(`已有同名方案「${name}」，换个名字`);
+    return;
+  }
+  const scheme: KeymapScheme = {
+    id: newSchemeId(),
+    name,
+    bindings: customBindings.value.map((item) => ({ ...item })),
+    createdAt: Date.now(),
+  };
+  schemes.value = [...schemes.value, scheme];
+  saveKeymapSchemes(schemes.value);
+  flash(`已保存方案「${name}」`);
+}
+
+function deleteScheme(id: string): void {
+  const scheme = schemes.value.find((item) => item.id === id);
+  if (!scheme) return;
+  schemes.value = schemes.value.filter((item) => item.id !== id);
+  saveKeymapSchemes(schemes.value);
+  flash(`已删除方案「${scheme.name}」，当前键位不变`);
+}
+
 function pressPitch(pitch: number, velocity = 100): void {
   void engine.start();
+  if (editMode.value) editPitch.value = pitch;
   if (pressed.has(pitch)) return;
   pressed.add(pitch);
   engine.noteOn(pitch, velocity);
+  visualizer.value?.trigger(pitch, velocity);
   recent.value = [midiToName(pitch), ...recent.value].slice(0, 8);
 }
 
@@ -88,13 +282,39 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.repeat || isTypingTarget(event.target)) return;
+
+  // 自定义键位：按键用于「绑定」而不是「演奏」
+  if (editMode.value) {
+    if (event.code === 'Escape') {
+      event.preventDefault();
+      exitEdit();
+      return;
+    }
+    if (editPitch.value === null) return;
+    event.preventDefault();
+    if (event.code === 'Backspace') {
+      restoreSelected();
+      return;
+    }
+    // Delete = 空置：这个音不绑任何键
+    if (event.code === 'Delete') {
+      clearSelected();
+      return;
+    }
+    if (!isBindableCode(event.code)) return;
+    const modifier = modifierFromEvent(event);
+    if (!modifier) return;
+    bindSelected(event.code, modifier);
+    return;
+  }
+
   const modifier = modifierFromEvent(event);
   if (!modifier) return;
-  const binding = keyMap.lookup(event.code, modifier);
+  const binding = resolveBinding(keyMap.value, event.code, modifier);
   if (!binding) return;
 
   event.preventDefault();
-  const keyId = `${modifier}:${event.code}`;
+  const keyId = `${binding.modifier}:${event.code}`;
   if (heldKeys.has(keyId)) return;
   heldKeys.set(keyId, binding.pitch);
   pressPitch(binding.pitch);
@@ -127,6 +347,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   unsubscribeStatus?.();
+  window.clearTimeout(lastActionTimer);
   window.removeEventListener('keydown', onKeyDown);
   window.removeEventListener('keyup', onKeyUp);
   window.removeEventListener('blur', onBlur);
@@ -187,12 +408,16 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <NoteVisualizer ref="visualizer" />
+
       <PianoKeyboard
         :pressed="pressed"
         :key-map="keyMap"
         :show-hints="showHints"
         :note-mode="noteMode"
         :viewport="viewportId"
+        :edit-mode="editMode"
+        :edit-pitch="editPitch"
         @press="pressPitch"
         @release="releasePitch"
       />
@@ -204,10 +429,22 @@ onBeforeUnmount(() => {
         v-model:solfege="showSolfege"
         v-model:instrument="instrument"
         v-model:volume="volume"
-        v-model:preset="keymapPreset"
         v-model:diagram-mode="diagramMode"
+        v-model:edit-mode="editMode"
         :key-map="keyMap"
         :pressed="pressed"
+        :edit-pitch="editPitch"
+        :custom-count="customCount"
+        :last-action="lastAction"
+        :schemes="schemes"
+        :active-scheme-id="activeSchemeId"
+        @toggle-edit="toggleEdit"
+        @restore="restoreSelected"
+        @clear="clearSelected"
+        @reset="resetBindings"
+        @apply-scheme="applyScheme"
+        @save-scheme="saveScheme"
+        @delete-scheme="deleteScheme"
       />
 
       <div class="foot">

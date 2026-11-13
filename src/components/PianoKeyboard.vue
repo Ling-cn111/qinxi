@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   BLACK_HEIGHT_RATIO,
   buildKeyboardLayout,
@@ -10,7 +10,8 @@ import {
   type PianoViewport,
 } from '@/keyboard/layout';
 import type { PianoKeyMap } from '@/keyboard/keyMap';
-import { noteLabelFor, type NoteLabelMode } from '@/keyboard/labels';
+import { noteLabelFor, splitHint, type NoteLabelMode } from '@/keyboard/labels';
+import { colorForPitch } from '@/keyboard/octaveColors';
 
 const props = defineProps<{
   /** 当前被按下的音高集合 */
@@ -22,6 +23,10 @@ const props = defineProps<{
   noteMode: NoteLabelMode;
   /** 当前 5 八度视口 */
   viewport: PianoViewport['id'];
+  /** 自定义键位模式：点键只选中，不当作演奏 */
+  editMode?: boolean;
+  /** 编辑态下已选中的音高 */
+  editPitch?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -45,11 +50,26 @@ const blackStyle = (key: { left: number; width: number }) => ({
 });
 
 const noteNameOf = (pitch: number) => props.keyMap.noteNameFor(pitch);
-const charOf = (pitch: number) => props.keyMap.charFor(pitch);
-const hintOf = (pitch: number) => (props.showHints ? charOf(pitch) : undefined);
+/** 键位提示直接用绑定标签，小键盘会自带 N 前缀 */
+const hintOf = (pitch: number) => (props.showHints ? props.keyMap.labelFor(pitch) : undefined);
+const blackHint = (pitch: number) => splitHint(hintOf(pitch));
 const nameOf = (pitch: number) => noteLabelFor(pitch, props.noteMode);
-const modifierSymbol = (pitch: number) => (props.keyMap.modifierFor(pitch) === 'alt' ? '⌥' : '⇧');
-const pressedClass = (pitch: number) => (props.pressed.has(pitch) ? 'is-pressed' : '');
+/** 八度配色：白键取深色版、黑键取浅色版 */
+const keyColor = (pitch: number, onBlack: boolean) => colorForPitch(pitch, onBlack);
+/**
+ * 编辑态的提示直接放在琴习那行中间：选中琴键后视线还在琴键上，
+ * 提示离得越近越不容易漏看；面板里那条提示条仍然保留（两处同步）。
+ */
+const bandHint = computed(() => {
+  if (!props.editMode) return '';
+  if (props.editPitch != null) {
+    return `${props.keyMap.noteNameFor(props.editPitch)} 已选中 · 按下要绑定的物理键 · Backspace 恢复 · Esc 退出`;
+  }
+  return '点一个琴键选中音，再按下要绑定的物理键 · Delete 空置 · Esc 退出';
+});
+const pressedClass = (pitch: number) => props.pressed.has(pitch) ? 'is-pressed' : '';
+const targetClass = (pitch: number) =>
+  props.editPitch === pitch ? 'is-target' : '';
 
 const onDown = (pitch: number, event: PointerEvent) => {
   event.preventDefault();
@@ -94,11 +114,11 @@ defineExpose({ scrollToViewport });
 </script>
 
 <template>
-  <div class="piano-wrap">
+  <div class="piano-wrap" :class="{ 'is-editing': editMode }">
     <!-- AutoPiano 顶盖：黑漆面板 + 内外双线边框 -->
     <div class="piano-band">
       <span class="piano-band__brand">琴习 QINXI</span>
-      <span class="piano-band__tip">⇧ 代表 shift 键</span>
+      <span v-if="bandHint" class="piano-band__hint" role="status">{{ bandHint }}</span>
     </div>
 
     <div ref="viewportRef" class="piano-key-wrap">
@@ -108,7 +128,7 @@ defineExpose({ scrollToViewport });
           :key="key.pitch"
           type="button"
           class="wkey"
-          :class="pressedClass(key.pitch)"
+          :class="[pressedClass(key.pitch), targetClass(key.pitch)]"
           :aria-label="`${noteNameOf(key.pitch)} 白键`"
           @pointerdown="onDown(key.pitch, $event)"
           @pointerup="emit('release', key.pitch)"
@@ -116,7 +136,7 @@ defineExpose({ scrollToViewport });
           @pointercancel="emit('release', key.pitch)"
           @contextmenu.prevent
         >
-          <span class="wkey__tip">
+          <span class="wkey__tip" :style="{ color: keyColor(key.pitch, false) }">
             <span v-if="hintOf(key.pitch)" class="wkey__key">{{ hintOf(key.pitch) }}</span>
             <span v-if="nameOf(key.pitch)" class="wkey__note">{{ nameOf(key.pitch) }}</span>
           </span>
@@ -127,7 +147,7 @@ defineExpose({ scrollToViewport });
           :key="key.pitch"
           type="button"
           class="bkey"
-          :class="pressedClass(key.pitch)"
+          :class="[pressedClass(key.pitch), targetClass(key.pitch)]"
           :style="blackStyle(key)"
           :aria-label="`${noteNameOf(key.pitch)} 黑键`"
           @pointerdown="onDown(key.pitch, $event)"
@@ -136,11 +156,11 @@ defineExpose({ scrollToViewport });
           @pointercancel="emit('release', key.pitch)"
           @contextmenu.prevent
         >
-          <span v-if="hintOf(key.pitch)" class="bkey__tip">
-            <span class="bkey__mod">{{ modifierSymbol(key.pitch) }}</span>
-            <span class="bkey__char">{{ hintOf(key.pitch) }}</span>
+          <span v-if="blackHint(key.pitch)" class="bkey__tip" :style="{ color: keyColor(key.pitch, true) }">
+            <span v-if="blackHint(key.pitch)?.mod" class="bkey__mod">{{ blackHint(key.pitch)?.mod }}</span>
+            <span class="bkey__char">{{ blackHint(key.pitch)?.char }}</span>
           </span>
-          <span v-else-if="nameOf(key.pitch)" class="bkey__tip bkey__tip--name">
+          <span v-if="nameOf(key.pitch)" class="bkey__name" :style="{ color: keyColor(key.pitch, true) }">
             {{ nameOf(key.pitch) }}
           </span>
         </button>
@@ -185,14 +205,51 @@ defineExpose({ scrollToViewport });
   color: rgba(255, 255, 255, 0.62);
 }
 
-.piano-band__tip {
+/* 编辑提示：贴在顶盖正中，只在自定义键位时出现 */
+.piano-band__hint {
   position: absolute;
+  left: 50%;
   top: 50%;
-  right: 20px;
-  transform: translateY(-50%);
-  color: #fff;
-  font-size: 14px;
-  opacity: 0.76;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 300px);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: #e5c79a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.piano-band__hint::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #cfa46a;
+  box-shadow: 0 0 0 3px rgba(207, 164, 106, 0.16);
+  animation: bandHintPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes bandHintPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (max-width: 900px) {
+  .piano-band__hint {
+    display: none;
+  }
 }
 
 /* --------------------------------------- AutoPiano: .piano-key-wrap */
@@ -215,6 +272,22 @@ defineExpose({ scrollToViewport });
   height: 100%;
   display: flex;
   position: relative;
+}
+
+/* 编辑键位：整块琴键可点选 */
+.piano-wrap.is-editing .wkey,
+.piano-wrap.is-editing .bkey {
+  cursor: crosshair;
+}
+
+.wkey.is-target {
+  outline: 2px solid #cfa46a;
+  outline-offset: -3px;
+}
+
+.bkey.is-target {
+  outline: 2px solid #cfa46a;
+  outline-offset: -2px;
 }
 
 /* ------------------------------------------------ AutoPiano: .wkey */
@@ -317,14 +390,13 @@ defineExpose({ scrollToViewport });
   font-size: 13.5px;
   line-height: 1;
   letter-spacing: 0.02em;
-  color: #7f7f7f;
+  opacity: 0.62;
 }
 
 .wkey__note {
   font-size: 13.5px;
   line-height: 1;
   letter-spacing: 0.01em;
-  color: #9d9d9d;
 }
 
 /* 黑键宽约 25px，"⇧Z" 单行会顶到边框：修饰键与字符分两行 */
@@ -345,16 +417,24 @@ defineExpose({ scrollToViewport });
 
 .bkey__mod {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.46);
+  opacity: 0.55;
 }
 
 .bkey__char {
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.8);
 }
 
-.bkey__tip--name {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+.bkey__name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 9px;
+  text-align: center;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.6;
+  white-space: nowrap;
+  pointer-events: none;
 }
 </style>
