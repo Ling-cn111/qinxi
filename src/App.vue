@@ -28,6 +28,10 @@ import {
   type KeymapScheme,
 } from '@/keyboard/keymapSchemes';
 import { midiToName } from '@/audio/note';
+import { BUILT_IN_SCORES, DEFAULT_SCORE_ID, findScore, loadScore } from '@/data/scores';
+import { activeNotesAt, samePitchSet } from '@/transport/activeNotes';
+import { Transport, type TransportSnapshot } from '@/transport/transport';
+import type { NoteEvent } from '@/types';
 import type { NoteLabelMode } from '@/keyboard/labels';
 import { DEFAULT_VIEWPORT_ID, PIANO_VIEWPORTS, type PianoViewport } from '@/keyboard/layout';
 import type { DeckTab } from '@/types';
@@ -92,6 +96,133 @@ const diagramMode = ref<'char' | 'note'>('note');
 
 // 自定义键位
 const editMode = ref(false);
+
+// ---------------------------------------------------------------- 自动播放
+/** 选中的内置曲谱 */
+const scoreId = ref<string>(DEFAULT_SCORE_ID);
+/** idle = 没在播；playing / paused 对应 Transport 的状态 */
+const playState = ref<'idle' | 'playing' | 'paused'>('idle');
+/** 自动播放正在响的音（琴键高亮的数据源，渲染循环里更新） */
+const autoPressed = ref<ReadonlySet<number>>(new Set());
+const playProgressText = ref('');
+/** 谱面按「默认布局（C2 起）+ 用户自定义」解释，不跟随音区视口 —— 换音区不能让曲子变调 */
+const baseKeyMap = computed(() => new PianoKeyMap({ custom: customBindings.value }));
+let currentNotes: NoteEvent[] = [];
+let renderRafId = 0;
+
+/**
+ * 播放时间轴：时钟只有一个（engine.now() = AudioContext.currentTime）。
+ * onNote 只管把音按绝对时刻交给引擎发声；琴键高亮不在 onNote 里做 ——
+ * 那时离发声还有约 100ms，会提前亮。高亮由渲染循环按 Transport 的拍位推。
+ */
+const transport = new Transport({
+  now: () => engine.now(),
+  bpm: 96,
+  callbacks: {
+    onNote: (item) => engine.playNote(item.pitch, item.when, item.duration, item.velocity),
+    onCancelAll: () => engine.stopAll(),
+    onTick: (snapshot) => updateProgress(snapshot),
+    onEnd: () => onPlaybackEnd(),
+  },
+});
+
+function updateProgress(snapshot: TransportSnapshot): void {
+  playProgressText.value = `${snapshot.beat.toFixed(1)} / ${snapshot.totalBeats.toFixed(1)} 拍`;
+}
+
+/** 渲染循环：每帧从拍位推出「此刻该亮的键」，集合没变就不动 DOM（CSS 类切换交给 PianoKeyboard） */
+function renderAutoplayKeys(): void {
+  // rawBeat 不做钳制：留白期是负数，此时不该有任何音亮着
+  const beat = transport.rawBeat;
+  const active = activeNotesAt(currentNotes, beat);
+  const next = new Set(active.map((note) => note.pitch));
+  const previous = autoPressed.value;
+  if (!samePitchSet(next, previous)) {
+    autoPressed.value = next;
+    for (const note of active) {
+      if (!previous.has(note.pitch)) visualizer.value?.trigger(note.pitch, 100);
+    }
+  }
+  renderRafId = playState.value === 'playing' ? requestAnimationFrame(renderAutoplayKeys) : 0;
+}
+
+function startRenderLoop(): void {
+  if (renderRafId) cancelAnimationFrame(renderRafId);
+  renderRafId = requestAnimationFrame(renderAutoplayKeys);
+}
+
+function stopRenderLoop(): void {
+  if (renderRafId) cancelAnimationFrame(renderRafId);
+  renderRafId = 0;
+}
+
+function startPlayback(): void {
+  const score = findScore(scoreId.value);
+  if (!score) return;
+  if (editMode.value) exitEdit();
+  // 用户手势里启动音频上下文；AudioContext 在 start() 里同步创建，engine.now() 随即可用
+  void engine.start();
+  const parsed = loadScore(score, baseKeyMap.value);
+  if (parsed.warnings.length > 0) {
+    console.warn('[琴习] 谱面解析有警告：', parsed.warnings);
+  }
+  currentNotes = parsed.notes;
+  transport.load(parsed.notes, { bpm: score.bpm });
+  transport.play();
+  playState.value = 'playing';
+  startRenderLoop();
+}
+
+function togglePlay(): void {
+  if (playState.value === 'playing') {
+    transport.pause();
+    playState.value = 'paused';
+    stopRenderLoop();
+    autoPressed.value = new Set();
+    return;
+  }
+  if (playState.value === 'paused') {
+    transport.play();
+    playState.value = 'playing';
+    startRenderLoop();
+    return;
+  }
+  startPlayback();
+}
+
+function stopPlayback(): void {
+  transport.stop();
+  playState.value = 'idle';
+  stopRenderLoop();
+  autoPressed.value = new Set();
+  updateProgress(transport.snapshot);
+}
+
+function onPlaybackEnd(): void {
+  playState.value = 'idle';
+  stopRenderLoop();
+  autoPressed.value = new Set();
+  updateProgress({ ...transport.snapshot, beat: 0 });
+}
+
+// 换曲目：正在播/暂停中都先停，避免「暂停在 A 曲第 3 拍、切到 B 曲接着放」的怪状态
+watch(scoreId, () => {
+  if (playState.value !== 'idle') stopPlayback();
+});
+
+// 进自定义键位编辑时，自动播放让位（两套高亮叠在一起没法看）
+watch(editMode, (on) => {
+  if (on && playState.value !== 'idle') stopPlayback();
+});
+
+/** 用户按的键 + 自动播放的键，合并给琴键做高亮 */
+const combinedPressed = computed<ReadonlySet<number>>(() => {
+  if (autoPressed.value.size === 0) return pressed;
+  const merged = new Set(pressed);
+  for (const pitch of autoPressed.value) merged.add(pitch);
+  return merged;
+});
+
 const editPitch = ref<number | null>(null);
 const lastAction = ref('');
 let lastActionTimer: number | undefined;
@@ -384,6 +515,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   unsubscribeStatus?.();
+  transport.dispose();
+  stopRenderLoop();
   window.clearTimeout(lastActionTimer);
   window.removeEventListener('keydown', onKeyDown);
   window.removeEventListener('keyup', onKeyUp);
@@ -453,6 +586,25 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="tools">
+          <div class="player" role="group" aria-label="自动播放">
+            <select v-model="scoreId" class="player__select" aria-label="选择曲谱" :disabled="playState !== 'idle'">
+              <option v-for="item in BUILT_IN_SCORES" :key="item.id" :value="item.id">{{ item.title }}</option>
+            </select>
+            <button type="button" class="text-btn player__play" @click="togglePlay">
+              <svg class="player__icon" viewBox="0 0 10 10" aria-hidden="true">
+                <template v-if="playState === 'playing'">
+                  <rect x="1.6" y="1.6" width="2.4" height="6.8" fill="currentColor" />
+                  <rect x="6" y="1.6" width="2.4" height="6.8" fill="currentColor" />
+                </template>
+                <template v-else>
+                  <path d="M2.4 1.3 8.4 5 2.4 8.7z" fill="currentColor" />
+                </template>
+              </svg>
+              {{ playState === 'playing' ? '暂停' : playState === 'paused' ? '继续' : '播放' }}
+            </button>
+            <button type="button" class="text-btn" :disabled="playState === 'idle'" @click="stopPlayback">停止</button>
+            <span class="player__beat">{{ playProgressText }}</span>
+          </div>
           <button type="button" class="text-btn" @click="releaseAll">全部松开</button>
         </div>
       </div>
@@ -460,7 +612,7 @@ onBeforeUnmount(() => {
       <NoteVisualizer ref="visualizer" />
 
       <PianoKeyboard
-        :pressed="pressed"
+        :pressed="combinedPressed"
         :key-map="keyMap"
         :show-hints="showHints"
         :note-mode="noteMode"
@@ -717,6 +869,77 @@ onBeforeUnmount(() => {
   color: rgba(var(--qin-w-rgb), 0.8);
 }
 
+.text-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.text-btn:disabled:hover {
+  color: rgba(var(--qin-w-rgb), 0.42);
+}
+
+/* ------------------------------------------------------------------ 播放控制条 */
+.player {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.player__select {
+  appearance: none;
+  padding: 4px 22px 4px 9px;
+  border: 1px solid rgba(var(--qin-w-rgb), 0.14);
+  border-radius: 2px;
+  background-color: transparent;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.2 2.9 4 5.7l2.8-2.8' fill='none' stroke='%238a8a8a' stroke-width='1.1'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 8px;
+  color: rgba(var(--qin-ink-rgb), 0.8);
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.player__select:hover:not(:disabled) {
+  border-color: rgba(var(--qin-accent-rgb), 0.42);
+  color: rgba(var(--qin-ink-rgb), 0.92);
+}
+
+.player__select:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.player__select option {
+  background: var(--qin-surface-2);
+  color: rgb(var(--qin-ink-rgb));
+}
+
+.player__play {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.player__icon {
+  width: 10px;
+  height: 10px;
+  display: block;
+}
+
+.player__beat {
+  min-width: 92px;
+  text-align: right;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: rgba(var(--qin-w-rgb), 0.32);
+  font-variant-numeric: tabular-nums;
+}
+
 /* 控制台下方的纯文本行 */
 .foot {
   width: 90%;
@@ -749,6 +972,7 @@ onBeforeUnmount(() => {
 
   .range span,
   .foot__item:nth-child(2),
+  .player__beat,
   .follow :deep(.switch__label) {
     display: none;
   }

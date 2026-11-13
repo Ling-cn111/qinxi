@@ -10,6 +10,7 @@
 - 深色界面，尺寸/配色严格对齐 AutoPiano：黑漆顶盖、`.wkey` / `.bkey` 的渐变色与边框均取自其源码
 - 钢琴上方是**音符频谱**：按下即跳出柱子（含泛音），松手按指数衰减
 - 钢琴下方是**三页签控制台**：显示（键面标注）、声音（音量）、键位（C 大调布局 + 自定义 / 空置 + 映射图）
+- **自动播放内置曲目**：控制栏选曲（小星星 / 欢乐颂）→ 播放 / 暂停 / 继续 / 停止，琴键跟着声音实时按下
 - 三套**外观主题**（舞台 / 赛博 / 中国红），右上角下拉切换并记住选择；只换背景与外壳，琴体不变
 
 > 参考项目：[AutoPiano 自由钢琴](https://www.autopiano.cn/)（[Wscats/piano](https://github.com/Wscats/piano)）。
@@ -189,6 +190,23 @@ docs/screenshots/  界面截图（PR 用）
 | 小星星 | C 大调 | 96 | 6 个乐句 + 结尾 C 大三和弦，演示和弦与延长 |
 | 欢乐颂 | C 大调 | 104 | 贝多芬主题，两段重复 |
 
+## 自动播放（控制栏右侧）
+
+选曲 → 播放：解析器把字符谱变成 `NoteEvent[]`，Transport 按绝对时刻把每个音交给引擎
+（`onNote` → `PianoEngine.playNote(pitch, when, duration)`），琴键高亮由渲染循环驱动：
+
+- **高亮与声音同一时钟**：渲染循环（rAF）每帧从 `Transport.rawBeat`（就是 `AudioContext.currentTime`
+  换算的拍位）用 `activeNotesAt(notes, beat)` 推出「此刻正在响的音」，与 `onNote` 排程的
+  `when` 同源同刻 —— 不在 onNote 里做高亮，因为那时离发声还有 ~100ms 前瞻，会提前亮。
+- **不卡 DOM**：`activeNotesAt` 是纯函数 + `samePitchSet` 浅比较，键集合没变的帧直接跳过，
+  Vue 不会重渲染；亮 / 灭就是 `PianoKeyboard` 已有的 `.is-pressed` CSS 类切换。
+- 高亮只会**晚一帧以内**、绝不超前于声音（rAF 16ms 粒度 + Vue 提交，实测比音频图晚 ~30ms，
+  真实设备上感知为同步）。
+- 播放期间用户键盘仍可跟着弹（两套按下集合合并）；进入「自定义键位」编辑时自动播放让位。
+- 暂停 / 停止让 `onCancelAll` → `engine.stopAll()`，前瞻窗里已进音频图的音会被掐掉。
+
+![自动播放](docs/screenshots/autoplay-sync.gif)
+
 ## 播放时间轴（Transport）
 
 `src/transport/transport.ts` 是手写的时间轴，不依赖任何调度库。
@@ -334,6 +352,7 @@ npm run test
 - `tests/legacyTone.test.ts`：软削波曲线（端点归一、奇对称、单调、驱动量）
 - `tests/gain.test.ts`：峰值检测、逐音归一化、包络衰减时常数、总线限幅与下压曲线
 - `tests/labels.test.ts`：唱名映射（含黑键升号、跨八度）、三档音名模式、黑键提示拆行
+- `tests/activeNotes.test.ts`：琴键高亮数据源（起拍 / 收拍边界、和弦、延长音、浮点容差、空谱）与集合浅比较
 - `tests/transport.test.ts`：拍位 ↔ 秒换算（60 / 80 / 90 / 120 BPM、可逆性）、前瞻窗边界、绝对时刻与唤醒时刻无关、
   迟到不吞音、不重复排程、和弦同刻、暂停 / 继续 / 停止 / 跳转 / 播完、参数校验
 - `tests/scoreParser.test.ts`：字符谱解析（音高与 startBeat、空白游程、休止 / 延长 / 和弦 / 转义 / 注释、非法字符与行列定位、strict 抛错、两首内置谱的音高与总时长）
@@ -352,7 +371,7 @@ Canvas 渲染与音频节点创建不做单测，验收方式见 PR 描述中的
 | --- | --- | --- | --- |
 | 0 | 仓库与脚手架 | `main` | 完成 |
 | 1 | 自由弹奏 | `main` | 完成 |
-| 2 | 谱面解析与自动播放 | `feature/parser-autoplay` | 进行中（解析器已完成） |
+| 2 | 谱面解析与自动播放 | 三个 PR（#8 已合并 + transport + autoplay-ui） | 本 PR 合并后完成 |
 | 3 | 跟弹判定 | `feature/follow-play` | 待开始 |
 | 4 | 变速与上方键盘谱 | `feature/practice-tools` | 待开始 |
 | 5 | 收尾 | `feature/polish` | 待开始 |
