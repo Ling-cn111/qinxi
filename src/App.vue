@@ -3,8 +3,10 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch 
 import PianoKeyboard from '@/components/PianoKeyboard.vue';
 import ControlDeck from '@/components/ControlDeck.vue';
 import NoteVisualizer from '@/components/NoteVisualizer.vue';
+import UiToggle from '@/components/UiToggle.vue';
 import { PianoEngine, type EngineStatus } from '@/audio/PianoEngine';
 import {
+  BASE_START_MIDI,
   isBindableCode,
   modifierFromEvent,
   PianoKeyMap,
@@ -35,8 +37,30 @@ const engine = new PianoEngine();
 const customBindings = ref<CustomBinding[]>(loadCustomBindings());
 const schemes = ref<KeymapScheme[]>(loadKeymapSchemes());
 
+const viewportId = ref<PianoViewport['id']>(DEFAULT_VIEWPORT_ID);
+/**
+ * 键位跟随音区：开的时候，切换视口会把整组键位跟着挪一个八度，
+ * 让同一套按键弹到当前看得见的那段琴键上（关着时键位固定在 C2–C7）。
+ */
+const followViewport = ref(false);
+
+/** 映射起点：跟随模式对齐视口最左侧的音（C1 / C2 / C3），否则固定在 C2 */
+function keymapStartMidi(): number {
+  if (!followViewport.value) return BASE_START_MIDI;
+  const target = PIANO_VIEWPORTS.find((item) => item.id === viewportId.value);
+  return target?.startPitch ?? BASE_START_MIDI;
+}
+
+/**
+ * 编辑时点到的音高是琴键上的绝对值，落盘要换回默认布局（C2 起）的坐标 ——
+ * 这样自定义键位会跟着音区一起平移，而不是留在一个绝对音高上。
+ */
+function toBasePitch(pitch: number): number {
+  return pitch - (keymapStartMidi() - BASE_START_MIDI);
+}
+
 function createKeyMap(): PianoKeyMap {
-  return new PianoKeyMap({ custom: customBindings.value });
+  return new PianoKeyMap({ startMidi: keymapStartMidi(), custom: customBindings.value });
 }
 
 const keyMap = shallowRef(createKeyMap());
@@ -56,7 +80,6 @@ const activeSchemeId = computed<string | null>(() => {
 const pressed = reactive(new Set<number>());
 const status = ref<EngineStatus>(engine.status);
 const volume = ref(100);
-const viewportId = ref<PianoViewport['id']>(DEFAULT_VIEWPORT_ID);
 const recent = ref<string[]>([]);
 const visualizer = ref<InstanceType<typeof NoteVisualizer> | null>(null);
 
@@ -142,10 +165,11 @@ function toggleEdit(): void {
 function bindSelected(code: string, modifier: 'none' | 'shift' | 'alt'): void {
   const pitch = editPitch.value;
   if (pitch === null) return;
+  const base = toBasePitch(pitch);
   const next = customBindings.value.filter(
-    (item) => !(item.code === code && item.modifier === modifier) && item.pitch !== pitch,
+    (item) => !(item.code === code && item.modifier === modifier) && item.pitch !== base,
   );
-  next.push({ code, modifier, pitch });
+  next.push({ code, modifier, pitch: base });
   applyCustomBindings(next);
   flash(`已把 ${midiToName(pitch)} 绑到 ${keyMap.value.labelFor(pitch) ?? code}`);
   editPitch.value = null;
@@ -155,7 +179,8 @@ function bindSelected(code: string, modifier: 'none' | 'shift' | 'alt'): void {
 function restoreSelected(): void {
   const pitch = editPitch.value;
   if (pitch === null) return;
-  const next = customBindings.value.filter((item) => item.pitch !== pitch);
+  const base = toBasePitch(pitch);
+  const next = customBindings.value.filter((item) => item.pitch !== base);
   if (next.length === customBindings.value.length) {
     flash(`${midiToName(pitch)} 本来就是默认键位`);
     return;
@@ -177,8 +202,9 @@ function clearSelected(): void {
     flash(`${midiToName(pitch)} 已经是空置状态`);
     return;
   }
-  const next = customBindings.value.filter((item) => item.pitch !== pitch);
-  next.push({ code: null, modifier: 'none', pitch });
+  const base = toBasePitch(pitch);
+  const next = customBindings.value.filter((item) => item.pitch !== base);
+  next.push({ code: null, modifier: 'none', pitch: base });
   applyCustomBindings(next);
   flash(`${midiToName(pitch)} 已空置，不绑定任何键`);
   editPitch.value = null;
@@ -336,6 +362,18 @@ watch(volume, (value) => {
   engine.setVolume(Math.min(1, Math.max(0, value / 100)));
 });
 
+/**
+ * 换视口、或开关「键位跟随音区」时重建映射：
+ * 起点没变（比如跟随关着，换视口只是滚动）就什么都不做，别打断按住的音；
+ * 真要平移八度时先松开所有音，否则旧映射下按下的音在 keyup 时对不上。
+ */
+watch([viewportId, followViewport], () => {
+  if (keymapStartMidi() === keyMap.value.baseStartMidi) return;
+  releaseAll();
+  editPitch.value = null;
+  keyMap.value = createKeyMap();
+});
+
 onMounted(() => {
   unsubscribeStatus = engine.onStatus((next) => {
     status.value = { ...next };
@@ -390,17 +428,26 @@ onBeforeUnmount(() => {
 
     <main class="stage">
       <div class="controls">
-        <div class="ranges" role="group" aria-label="音域视口">
-          <button
-            v-for="item in PIANO_VIEWPORTS"
-            :key="item.id"
-            type="button"
-            class="range"
-            :class="{ 'is-active': item.id === viewportId }"
-            @click="viewportId = item.id"
+        <div class="controls__left">
+          <div class="ranges" role="group" aria-label="音域视口">
+            <button
+              v-for="item in PIANO_VIEWPORTS"
+              :key="item.id"
+              type="button"
+              class="range"
+              :class="{ 'is-active': item.id === viewportId }"
+              @click="viewportId = item.id"
+            >
+              {{ item.label }}<span>{{ item.span }}</span>
+            </button>
+          </div>
+
+          <div
+            class="follow"
+            title="开启后切换音区时，整组键位跟着移动一个八度，同样的按键始终弹当前可见的琴键"
           >
-            {{ item.label }}<span>{{ item.span }}</span>
-          </button>
+            <UiToggle v-model="followViewport" label="键位跟随音区" />
+          </div>
         </div>
 
         <div class="tools">
@@ -578,6 +625,46 @@ onBeforeUnmount(() => {
   display: flex;
 }
 
+/* 「键位跟随音区」：贴着高音区右边，用竖细分隔线跟视口按钮分开 */
+.controls__left {
+  display: flex;
+  align-items: center;
+}
+
+.follow {
+  display: flex;
+  align-items: center;
+  margin-left: 14px;
+  padding-left: 18px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.follow :deep(.switch) {
+  gap: 8px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.48);
+  transition: color 120ms ease;
+}
+
+.follow :deep(.switch.is-on) {
+  color: #e5c79a;
+}
+
+.follow :deep(.switch__track) {
+  width: 30px;
+  height: 16px;
+}
+
+.follow :deep(.switch__thumb) {
+  width: 12px;
+  height: 12px;
+}
+
+.follow :deep(.switch.is-on .switch__thumb) {
+  transform: translateX(14px);
+}
+
 .range {
   padding: 9px 14px 8px;
   border: 0;
@@ -660,7 +747,8 @@ onBeforeUnmount(() => {
   }
 
   .range span,
-  .foot__item:nth-child(2) {
+  .foot__item:nth-child(2),
+  .follow :deep(.switch__label) {
     display: none;
   }
 }

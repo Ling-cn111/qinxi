@@ -265,7 +265,12 @@ export function resolveBinding(
 export interface KeyMapOptions {
   /** 起点，默认 C2（36）；改它等于整体平移八度 */
   startMidi?: number;
-  /** 用户改动（绑定 + 空置），叠加在默认布局之上 */
+  /**
+   * 用户改动（绑定 + 空置），叠加在默认布局之上。
+   *
+   * 音高按**默认布局的坐标**记录（即 C2 起的那一套），渲染时会跟着 `startMidi` 一起平移：
+   * 「跟随音区」打开后，自定义的键位和整个布局保持同样的形状。
+   */
   custom?: readonly CustomBinding[];
 }
 
@@ -290,14 +295,21 @@ export class PianoKeyMap {
   constructor(options: KeyMapOptions = {}) {
     this.startMidi = options.startMidi ?? BASE_START_MIDI;
 
+    // 自定义音高按默认布局的坐标存，这里统一平移到当前起点：
+    // 琴键上看到的音高、`clearedPitches` / `customPitches` 都是平移后的绝对值，
+    // 而 localStorage 与方案里仍是 C2 坐标，换音区不会改写用户数据。
+    const shift = this.startMidi - BASE_START_MIDI;
+
     for (const item of options.custom ?? []) {
-      if (!Number.isInteger(item.pitch) || item.pitch < MIN_MIDI || item.pitch > MAX_MIDI) continue;
+      if (!Number.isInteger(item.pitch)) continue;
+      const pitch = item.pitch + shift;
+      if (pitch < MIN_MIDI || pitch > MAX_MIDI) continue;
       if (item.code === null) {
-        this.cleared.add(item.pitch);
+        this.cleared.add(pitch);
         continue;
       }
       if (!isBindableCode(item.code)) continue;
-      this.customBinds.set(`${item.modifier}:${item.code}`, item.pitch);
+      this.customBinds.set(`${item.modifier}:${item.code}`, pitch);
     }
     // 同一个音既「空置」又「绑定」时以绑定为准（用户最后一步是绑定）
     for (const pitch of this.customBinds.values()) this.cleared.delete(pitch);
