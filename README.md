@@ -259,7 +259,8 @@ docs/screenshots/  界面截图（PR 用）
   Vue 不会重渲染；亮 / 灭就是 `PianoKeyboard` 已有的 `.is-pressed` CSS 类切换。
 - 高亮只会**晚一帧以内**、绝不超前于声音（rAF 16ms 粒度 + Vue 提交，实测比音频图晚 ~30ms，
   真实设备上感知为同步）。
-- 播放期间用户键盘仍可跟着弹（两套按下集合合并）；进入「自定义键位」编辑时自动播放让位。
+- 播放期间用户键盘仍可跟着弹（两套按下集合合并，互不干扰：松开你按的键**不会**掐掉
+  自动播放排程中的同音高音符——引擎里 manual / scheduled 两类 Voice 分开管理）；进入「自定义键位」编辑时自动播放让位。
 - 暂停 / 停止让 `onCancelAll` → `engine.stopAll()`，前瞻窗里已进音频图的音会被掐掉。
 
 ![自动播放](docs/screenshots/autoplay-sync.gif)

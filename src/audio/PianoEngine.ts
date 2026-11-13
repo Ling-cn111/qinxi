@@ -33,6 +33,13 @@ interface Voice {
   released: boolean;
   /** 释放被安排在哪一刻；`Infinity` = 还没安排 */
   releaseAt: number;
+  /**
+   * 声音来源：`manual` = 用户按键（noteOn），`scheduled` = 自动播放等按绝对时刻
+   * 整段排程的音（playNote，带预排释放）。
+   * noteOff 只释放 manual——用户松开自己的键，绝不能顺带掐掉前瞻窗里
+   * 同音高的 scheduled 音符（否则自动播放会随机吞音，键面亮了却没声）。
+   */
+  origin: 'manual' | 'scheduled';
 }
 
 export interface PianoEngineOptions {
@@ -359,7 +366,7 @@ export class PianoEngine {
    * @param when AudioContext 时间轴上的调度时刻，省略则"立即"
    */
   noteOn(pitch: number, velocity = 100, when?: number): void {
-    this.scheduleVoice(pitch, velocity, when);
+    this.scheduleVoice(pitch, velocity, when, undefined, 'manual');
   }
 
   /** 松开琴键：进入短释放，而不是硬切 */
@@ -367,22 +374,27 @@ export class PianoEngine {
     const ctx = this.ctx;
     if (!ctx) return;
     const at = Number.isFinite(when) ? Math.max(when as number, ctx.currentTime) : ctx.currentTime;
-    // 不能用 `!voice.released` 过滤：playNote 会把释放提前排到将来并立刻标记 released，
-    // 这样过滤会让手动的 noteOff 完全失效。是否真的要释放交给 releaseVoice 按时刻判断。
+    // 只释放用户自己按的音（manual）。不能碰 scheduled 的音：
+    // playNote 会把释放提前排到将来并立刻标记 released，如果在这里一并释放，
+    // 用户松开任何一个键都会把前瞻窗里同音高的自动播放音符硬杀掉 ——
+    // 表现为「键面高亮了却不发声」「自动播放时断时续」。
+    // scheduled 音的停止只归 stopAll()（暂停 / 停止 / 跳转）管。
     for (const voice of this.voices) {
-      if (voice.pitch === pitch) this.releaseVoice(voice, at);
+      if (voice.pitch === pitch && voice.origin === 'manual') this.releaseVoice(voice, at);
     }
   }
 
   /** 定时长发声，供自动播放 / 练习回放使用 */
   playNote(pitch: number, when?: number, durationSeconds = 1.6, velocity = 100): void {
-    this.scheduleVoice(pitch, velocity, when, durationSeconds);
+    this.scheduleVoice(pitch, velocity, when, durationSeconds, 'scheduled');
   }
 
   stopAll(): void {
     const ctx = this.ctx;
     if (!ctx) return;
-    // 同 noteOff：已经排了「未来释放」的音（playNote）也要掐掉，判断在 releaseVoice 里做
+    // 暂停 / 停止 / 跳转：manual 与 scheduled 一并掐掉（含还没起振的），
+    // 否则前瞻窗里的音已经进了音频图，光停定时器停不掉它们。
+    // 判断是否需要重复释放交给 releaseVoice 按时刻做。
     for (const voice of this.voices) {
       this.releaseVoice(voice, ctx.currentTime);
     }
@@ -409,6 +421,7 @@ export class PianoEngine {
     velocity: number,
     when?: number,
     durationSeconds?: number,
+    origin: 'manual' | 'scheduled' = 'manual',
   ): void {
     const ctx = this.ctx;
     const bus = this.bus;
@@ -458,6 +471,7 @@ export class PianoEngine {
       startedAt: params.when,
       released: false,
       releaseAt: Number.POSITIVE_INFINITY,
+      origin,
     };
     this.voices.push(voice);
 
