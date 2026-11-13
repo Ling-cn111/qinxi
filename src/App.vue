@@ -1,9 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
 import PianoKeyboard from '@/components/PianoKeyboard.vue';
 import ControlDeck from '@/components/ControlDeck.vue';
+import NoteVisualizer from '@/components/NoteVisualizer.vue';
 import { PianoEngine, type EngineStatus } from '@/audio/PianoEngine';
-import { getKeyMap, modifierFromEvent } from '@/keyboard/keyMap';
+import {
+  BASE_START_MIDI,
+  isBindableCode,
+  modifierFromEvent,
+  PianoKeyMap,
+  type CustomBinding,
+} from '@/keyboard/keyMap';
+import { clearCustomBindings, loadCustomBindings, saveCustomBindings } from '@/keyboard/customKeymap';
 import { midiToName } from '@/audio/note';
 import type { NoteLabelMode } from '@/keyboard/labels';
 import { DEFAULT_INSTRUMENT_ID } from '@/data/instruments';
@@ -11,13 +19,16 @@ import { DEFAULT_VIEWPORT_ID, PIANO_VIEWPORTS, type PianoViewport } from '@/keyb
 import type { DeckTab } from '@/types';
 
 const engine = new PianoEngine();
-const keyMap = getKeyMap();
+
+const customBindings = ref<CustomBinding[]>(loadCustomBindings());
+const keyMap = shallowRef(new PianoKeyMap(BASE_START_MIDI, customBindings.value));
 
 const pressed = reactive(new Set<number>());
 const status = ref<EngineStatus>(engine.status);
 const volume = ref(100);
 const viewportId = ref<PianoViewport['id']>(DEFAULT_VIEWPORT_ID);
 const recent = ref<string[]>([]);
+const visualizer = ref<InstanceType<typeof NoteVisualizer> | null>(null);
 
 // 控制台状态
 const deckTab = ref<DeckTab>('display');
@@ -25,14 +36,21 @@ const showHints = ref(true);
 const showNoteNames = ref(true);
 const showSolfege = ref(false);
 const instrument = ref(DEFAULT_INSTRUMENT_ID);
-const keymapPreset = ref('autopiano');
 const diagramMode = ref<'char' | 'note'>('note');
+
+// 自定义键位
+const editMode = ref(false);
+const editPitch = ref<number | null>(null);
+const lastAction = ref('');
+let lastActionTimer: number | undefined;
 
 const noteMode = computed<NoteLabelMode>(() => {
   if (showSolfege.value) return 'solfege';
   if (showNoteNames.value) return 'note';
   return 'none';
 });
+
+const customCount = computed(() => keyMap.value.customCount);
 
 /** 记录物理按键当前锁定的音高，避免 Shift 状态变化导致"松不掉" */
 const heldKeys = new Map<string, number>();
@@ -60,11 +78,76 @@ const currentViewport = computed(
   () => PIANO_VIEWPORTS.find((item) => item.id === viewportId.value) ?? PIANO_VIEWPORTS[1],
 );
 
+function flash(message: string): void {
+  lastAction.value = message;
+  window.clearTimeout(lastActionTimer);
+  lastActionTimer = window.setTimeout(() => {
+    lastAction.value = '';
+  }, 4000);
+}
+
+function applyCustomBindings(next: CustomBinding[]): void {
+  customBindings.value = next;
+  saveCustomBindings(next);
+  keyMap.value = new PianoKeyMap(BASE_START_MIDI, next);
+}
+
+function startEdit(): void {
+  editMode.value = true;
+  editPitch.value = null;
+  lastAction.value = '';
+}
+
+function exitEdit(): void {
+  editMode.value = false;
+  editPitch.value = null;
+}
+
+function toggleEdit(): void {
+  if (editMode.value) exitEdit();
+  else startEdit();
+}
+
+/** 把当前选中的音绑到某个物理键上：同一个键、同一个音都只保留一条 */
+function bindSelected(code: string, modifier: 'none' | 'shift' | 'alt'): void {
+  const pitch = editPitch.value;
+  if (pitch === null) return;
+  const next = customBindings.value.filter(
+    (item) => !(item.code === code && item.modifier === modifier) && item.pitch !== pitch,
+  );
+  next.push({ code, modifier, pitch });
+  applyCustomBindings(next);
+  flash(`已把 ${midiToName(pitch)} 绑到 ${keyMap.value.labelFor(pitch) ?? code}`);
+  editPitch.value = null;
+}
+
+/** 取消该音的自定义，回到默认键位 */
+function restoreSelected(): void {
+  const pitch = editPitch.value;
+  if (pitch === null) return;
+  const next = customBindings.value.filter((item) => item.pitch !== pitch);
+  if (next.length === customBindings.value.length) {
+    flash(`${midiToName(pitch)} 本来就是默认键位`);
+    return;
+  }
+  applyCustomBindings(next);
+  flash(`${midiToName(pitch)} 已恢复默认键位`);
+}
+
+function resetBindings(): void {
+  clearCustomBindings();
+  applyCustomBindings([]);
+  editPitch.value = null;
+  flash('已恢复全部默认键位');
+}
+
 function pressPitch(pitch: number, velocity = 100): void {
   void engine.start();
+  if (editMode.value) editPitch.value = pitch;
   if (pressed.has(pitch)) return;
   pressed.add(pitch);
   engine.noteOn(pitch, velocity);
+  visualizer.value?.trigger(pitch, velocity);
   recent.value = [midiToName(pitch), ...recent.value].slice(0, 8);
 }
 
@@ -88,9 +171,30 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.repeat || isTypingTarget(event.target)) return;
+
+  // 自定义键位：按键用于「绑定」而不是「演奏」
+  if (editMode.value) {
+    if (event.code === 'Escape') {
+      event.preventDefault();
+      exitEdit();
+      return;
+    }
+    if (editPitch.value === null) return;
+    event.preventDefault();
+    if (event.code === 'Backspace' || event.code === 'Delete') {
+      restoreSelected();
+      return;
+    }
+    if (!isBindableCode(event.code)) return;
+    const modifier = modifierFromEvent(event);
+    if (!modifier) return;
+    bindSelected(event.code, modifier);
+    return;
+  }
+
   const modifier = modifierFromEvent(event);
   if (!modifier) return;
-  const binding = keyMap.lookup(event.code, modifier);
+  const binding = keyMap.value.lookup(event.code, modifier);
   if (!binding) return;
 
   event.preventDefault();
@@ -127,6 +231,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   unsubscribeStatus?.();
+  window.clearTimeout(lastActionTimer);
   window.removeEventListener('keydown', onKeyDown);
   window.removeEventListener('keyup', onKeyUp);
   window.removeEventListener('blur', onBlur);
@@ -187,12 +292,16 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <NoteVisualizer ref="visualizer" />
+
       <PianoKeyboard
         :pressed="pressed"
         :key-map="keyMap"
         :show-hints="showHints"
         :note-mode="noteMode"
         :viewport="viewportId"
+        :edit-mode="editMode"
+        :edit-pitch="editPitch"
         @press="pressPitch"
         @release="releasePitch"
       />
@@ -204,10 +313,16 @@ onBeforeUnmount(() => {
         v-model:solfege="showSolfege"
         v-model:instrument="instrument"
         v-model:volume="volume"
-        v-model:preset="keymapPreset"
         v-model:diagram-mode="diagramMode"
+        v-model:edit-mode="editMode"
         :key-map="keyMap"
         :pressed="pressed"
+        :edit-pitch="editPitch"
+        :custom-count="customCount"
+        :last-action="lastAction"
+        @toggle-edit="toggleEdit"
+        @restore="restoreSelected"
+        @reset="resetBindings"
       />
 
       <div class="foot">

@@ -13,6 +13,8 @@ import type { PianoKeyMap } from '@/keyboard/keyMap';
 const props = defineProps<{
   keyMap: PianoKeyMap;
   pressed: ReadonlySet<number>;
+  /** 被用户自定义过的音高，键帽上单独标色 */
+  custom: ReadonlySet<number>;
   /** 键帽主标签：键盘字符 / 音名 */
   mode: 'char' | 'note';
 }>();
@@ -99,13 +101,21 @@ const ROWS: readonly (readonly CapKey[])[] = [
   ],
 ];
 
-const labelOf = (key: CapKey): string => {
-  const binding = props.keyMap.lookup(key.code, 'none');
-  if (!binding) return key.caption;
-  return props.mode === 'char' ? binding.char.toUpperCase() : midiToName(binding.pitch);
-};
+interface CapInfo {
+  text: string;
+  mapped: boolean;
+  custom: boolean;
+}
 
-const isMapped = (key: CapKey): boolean => Boolean(props.keyMap.lookup(key.code, 'none'));
+const infoOf = (key: CapKey): CapInfo => {
+  const binding = props.keyMap.lookup(key.code, 'none');
+  if (!binding) return { text: key.caption, mapped: false, custom: false };
+  return {
+    text: props.mode === 'char' ? binding.char.toUpperCase() : midiToName(binding.pitch),
+    mapped: true,
+    custom: props.custom.has(binding.pitch),
+  };
+};
 
 /** 当前按下的音高 → 物理键位（黑键取 Shift 组合所在的键） */
 const downCodes = computed(() => {
@@ -127,13 +137,14 @@ const downCodes = computed(() => {
         :key="key.code"
         class="cap"
         :class="{
-          'cap--mapped': isMapped(key),
-          'cap--modifier': !isMapped(key),
+          'cap--mapped': infoOf(key).mapped,
+          'cap--modifier': !infoOf(key).mapped,
+          'cap--custom': infoOf(key).custom,
           'is-down': downCodes.has(key.code),
         }"
         :style="{ flexGrow: key.units }"
       >
-        {{ labelOf(key) }}
+        {{ infoOf(key).text }}
       </span>
     </div>
   </div>
@@ -186,6 +197,15 @@ const downCodes = computed(() => {
 .cap--mapped {
   background: #353535;
   color: #ded9cf;
+}
+
+/* 被自定义过的键：暖色，和默认键位区分开 */
+.cap--custom {
+  color: #e5c79a;
+  box-shadow:
+    inset 0 -2px 0 rgba(0, 0, 0, 0.55),
+    inset 0 -1px 0 rgba(207, 164, 106, 0.7),
+    0 1px 0 rgba(0, 0, 0, 0.5);
 }
 
 .cap.is-down {

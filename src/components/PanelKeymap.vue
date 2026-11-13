@@ -1,74 +1,106 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import KeyMapDiagram from './KeyMapDiagram.vue';
 import type { PianoKeyMap } from '@/keyboard/keyMap';
 
 /**
- * 「键位」页：键位方案 + 电脑键盘映射图。
- * 方案目前只实现了 AutoPiano / VirtualPiano 这一套（与 `keyboard/keyMap.ts` 一致），
- * 另两套是社区常用谱的键位，等解析器支持多方案再开。
+ * 「键位」页：默认键位说明 + 自定义键位 + 键盘映射图。
+ *
+ * 自定义流程：点「自定义键位」→ 在钢琴上点一个音 → 按下要绑定的物理键。
+ * 绑定关系交给 App 处理（它持有 keyMap 与本地存储），这里只负责交互与展示。
  */
 const props = defineProps<{
   keyMap: PianoKeyMap;
   pressed: ReadonlySet<number>;
+  /** 编辑态下已选中的音高 */
+  editPitch: number | null;
+  /** 已自定义的条目数 */
+  customCount: number;
+  /** 操作反馈（几秒后自动消失） */
+  lastAction: string;
 }>();
 
-const preset = defineModel<string>('preset', { required: true });
+const emit = defineEmits<{
+  toggleEdit: [];
+  restore: [];
+  reset: [];
+}>();
+
+const editMode = defineModel<boolean>('editMode', { required: true });
 const mode = defineModel<'char' | 'note'>('mode', { required: true });
 
-interface Preset {
-  id: string;
-  name: string;
-  available: boolean;
-  desc: string;
+const confirmingReset = ref(false);
+let resetTimer: number | undefined;
+
+const statusText = computed(() =>
+  props.customCount > 0 ? `默认键位 · 已自定义 ${props.customCount} 处` : '默认键位 · 未自定义',
+);
+
+const editHint = computed(() => {
+  if (props.editPitch !== null) {
+    return `已选 ${props.keyMap.noteNameFor(props.editPitch)}，按下一个物理键完成绑定`;
+  }
+  return '在钢琴上点一个音，再按下要绑定的物理键';
+});
+
+function onReset(): void {
+  if (!confirmingReset.value) {
+    confirmingReset.value = true;
+    window.clearTimeout(resetTimer);
+    resetTimer = window.setTimeout(() => {
+      confirmingReset.value = false;
+    }, 3000);
+    return;
+  }
+  window.clearTimeout(resetTimer);
+  confirmingReset.value = false;
+  emit('reset');
 }
 
-const PRESETS: readonly Preset[] = [
-  {
-    id: 'autopiano',
-    name: '默认 / AutoPiano / VirtualPiano',
-    available: true,
-    desc: 'AutoPiano 标准键位，兼容 VirtualPiano 键位，是自由钢琴键盘谱使用的默认键位，音高按键盘排列依次递增。',
-  },
-  {
-    id: 'freepiano',
-    name: 'FreePiano / EveryonePiano',
-    available: false,
-    desc: 'FreePiano / 人人钢琴的键位方案，待解析器支持多方案后接入。',
-  },
-  {
-    id: 'flash',
-    name: 'Flash Piano',
-    available: false,
-    desc: 'Flash Piano 的键位方案，待解析器支持多方案后接入。',
-  },
-];
-
-const activePreset = computed(
-  () => PRESETS.find((item) => item.id === preset.value) ?? PRESETS[0],
-);
+onBeforeUnmount(() => window.clearTimeout(resetTimer));
 </script>
 
 <template>
   <section class="panel">
-    <h3 class="panel-title"><span class="panel-title__num">1</span>键位设置</h3>
+    <div class="panel-head">
+      <h3 class="panel-title"><span class="panel-title__num">1</span>键位</h3>
 
-    <div class="presets">
+      <div class="head-actions">
+        <span class="status">{{ statusText }}</span>
+        <button type="button" class="ghost" :class="{ 'is-active': editMode }" @click="emit('toggleEdit')">
+          {{ editMode ? '退出自定义' : '自定义键位' }}
+        </button>
+        <button
+          type="button"
+          class="ghost ghost--danger"
+          :class="{ 'is-confirming': confirmingReset }"
+          @click="onReset"
+        >
+          {{ confirmingReset ? '再点一次确认' : '恢复默认' }}
+        </button>
+      </div>
+    </div>
+
+    <p class="panel-desc">
+      默认键位把四排字母键与数字键从低到高依次铺开：下排从 C2 起，每排接着上一排的末尾；
+      Shift + 键取该键上方的黑键，Alt + 键取下方黑键。自定义只存在本地，刷新不丢。
+    </p>
+
+    <div v-if="editMode" class="editor">
+      <span class="editor__dot" aria-hidden="true"></span>
+      <span class="editor__text">{{ editHint }}</span>
+      <span class="editor__tips">Backspace 恢复该音 · Esc 退出</span>
       <button
-        v-for="item in PRESETS"
-        :key="item.id"
+        v-if="editPitch !== null"
         type="button"
-        class="preset"
-        :class="{ 'is-active': item.id === preset && item.available, 'is-locked': !item.available }"
-        :disabled="!item.available"
-        @click="preset = item.id"
+        class="ghost ghost--small"
+        @click="emit('restore')"
       >
-        <span class="preset__mark" aria-hidden="true"></span>
-        {{ item.name }}
+        恢复该音默认
       </button>
     </div>
 
-    <p class="preset__desc">{{ activePreset.desc }}</p>
+    <p v-if="lastAction" class="panel-flash">{{ lastAction }}</p>
 
     <div class="panel-head panel-head--gap">
       <h3 class="panel-title"><span class="panel-title__num">2</span>键盘</h3>
@@ -88,10 +120,15 @@ const activePreset = computed(
     </div>
 
     <p class="panel-desc panel-desc--tight">
-      黑键 = Shift + 左侧白键（⇧Z = C♯2），⌥ + 右侧白键为同义写法；演奏时对应键帽会点亮。
+      演奏时对应键帽会点亮；被自定义过的音用暖色标出。黑键默认走 Shift 组合，也可以直接绑到任意键上。
     </p>
 
-    <KeyMapDiagram :key-map="props.keyMap" :pressed="props.pressed" :mode="mode" />
+    <KeyMapDiagram
+      :key-map="props.keyMap"
+      :pressed="props.pressed"
+      :custom="props.keyMap.customPitches"
+      :mode="mode"
+    />
   </section>
 </template>
 
@@ -100,74 +137,122 @@ const activePreset = computed(
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .panel-head--gap {
   margin-top: 26px;
 }
 
-.presets {
+.head-actions {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
 }
 
-.preset {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 14px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.status {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(231, 227, 220, 0.34);
+}
+
+.ghost {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 2px;
-  background: #202020;
-  color: rgba(231, 227, 220, 0.72);
+  background: transparent;
+  color: rgba(231, 227, 220, 0.66);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   letter-spacing: 0.02em;
   cursor: pointer;
   transition:
     border-color 120ms ease,
-    background 120ms ease,
-    color 120ms ease;
+    color 120ms ease,
+    background 120ms ease;
 }
 
-.preset:hover:not(:disabled) {
-  border-color: rgba(207, 164, 106, 0.42);
+.ghost:hover {
+  border-color: rgba(207, 164, 106, 0.45);
   color: #e7e3dc;
 }
 
-.preset.is-active {
-  border-color: rgba(207, 164, 106, 0.7);
+.ghost.is-active {
+  border-color: rgba(207, 164, 106, 0.65);
   background: #241b12;
   color: #e5c79a;
 }
 
-.preset.is-locked {
-  cursor: not-allowed;
-  color: rgba(231, 227, 220, 0.28);
-  border-style: dashed;
-  border-color: rgba(255, 255, 255, 0.08);
+.ghost--danger:hover {
+  border-color: rgba(207, 120, 90, 0.55);
+  color: #e8b4a2;
 }
 
-/* 键帽状的小方块标识，避免用 emoji */
-.preset__mark {
-  width: 12px;
-  height: 10px;
-  border: 1px solid currentColor;
-  border-radius: 1px;
-  opacity: 0.65;
-  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+.ghost--danger.is-confirming {
+  border-color: rgba(207, 120, 90, 0.75);
+  color: #e8b4a2;
+  background: rgba(120, 50, 30, 0.22);
 }
 
-.preset__desc {
-  margin: 12px 0 0;
-  padding: 12px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  background: #1b1b1b;
+.ghost--small {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+
+/* 编辑态提示条 */
+.editor {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border: 1px solid rgba(207, 164, 106, 0.4);
+  background: rgba(207, 164, 106, 0.08);
   font-size: 12.5px;
-  line-height: 1.7;
-  color: rgba(231, 227, 220, 0.44);
+  color: #e8d9c2;
+}
+
+.editor__dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #cfa46a;
+  box-shadow: 0 0 0 3px rgba(207, 164, 106, 0.18);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.editor__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.editor__tips {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: rgba(232, 217, 194, 0.5);
+  white-space: nowrap;
+}
+
+.panel-flash {
+  margin: 12px 0 0;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: #cfa46a;
 }
 
 .radios {

@@ -14,6 +14,15 @@ import type { DeckTab } from '@/types';
 const props = defineProps<{
   keyMap: PianoKeyMap;
   pressed: ReadonlySet<number>;
+  editPitch: number | null;
+  customCount: number;
+  lastAction: string;
+}>();
+
+const emit = defineEmits<{
+  toggleEdit: [];
+  restore: [];
+  reset: [];
 }>();
 
 const tab = defineModel<DeckTab>('tab', { required: true });
@@ -22,8 +31,8 @@ const noteNames = defineModel<boolean>('noteNames', { required: true });
 const solfege = defineModel<boolean>('solfege', { required: true });
 const instrument = defineModel<string>('instrument', { required: true });
 const volume = defineModel<number>('volume', { required: true });
-const preset = defineModel<string>('preset', { required: true });
 const diagramMode = defineModel<'char' | 'note'>('diagramMode', { required: true });
+const editMode = defineModel<boolean>('editMode', { required: true });
 
 const activeInstrument = computed(
   () => findInstrument(instrument.value)?.name ?? '未选择',
@@ -97,10 +106,16 @@ const TABS = [
       />
       <PanelKeymap
         v-else
-        v-model:preset="preset"
         v-model:mode="diagramMode"
+        v-model:edit-mode="editMode"
         :key-map="props.keyMap"
         :pressed="props.pressed"
+        :edit-pitch="props.editPitch"
+        :custom-count="props.customCount"
+        :last-action="props.lastAction"
+        @toggle-edit="emit('toggleEdit')"
+        @restore="emit('restore')"
+        @reset="emit('reset')"
       />
     </div>
   </section>

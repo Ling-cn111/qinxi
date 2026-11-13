@@ -22,6 +22,10 @@ const props = defineProps<{
   noteMode: NoteLabelMode;
   /** 当前 5 八度视口 */
   viewport: PianoViewport['id'];
+  /** 自定义键位模式：点键只选中，不当作演奏 */
+  editMode?: boolean;
+  /** 编辑态下已选中的音高 */
+  editPitch?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -48,8 +52,15 @@ const noteNameOf = (pitch: number) => props.keyMap.noteNameFor(pitch);
 const charOf = (pitch: number) => props.keyMap.charFor(pitch);
 const hintOf = (pitch: number) => (props.showHints ? charOf(pitch) : undefined);
 const nameOf = (pitch: number) => noteLabelFor(pitch, props.noteMode);
-const modifierSymbol = (pitch: number) => (props.keyMap.modifierFor(pitch) === 'alt' ? '⌥' : '⇧');
-const pressedClass = (pitch: number) => (props.pressed.has(pitch) ? 'is-pressed' : '');
+const modifierSymbol = (pitch: number) => {
+  const modifier = props.keyMap.modifierFor(pitch);
+  if (modifier === 'alt') return '⌥';
+  if (modifier === 'shift') return '⇧';
+  return '';
+};
+const pressedClass = (pitch: number) => props.pressed.has(pitch) ? 'is-pressed' : '';
+const targetClass = (pitch: number) =>
+  props.editPitch === pitch ? 'is-target' : '';
 
 const onDown = (pitch: number, event: PointerEvent) => {
   event.preventDefault();
@@ -94,7 +105,7 @@ defineExpose({ scrollToViewport });
 </script>
 
 <template>
-  <div class="piano-wrap">
+  <div class="piano-wrap" :class="{ 'is-editing': editMode }">
     <!-- AutoPiano 顶盖：黑漆面板 + 内外双线边框 -->
     <div class="piano-band">
       <span class="piano-band__brand">琴习 QINXI</span>
@@ -108,7 +119,7 @@ defineExpose({ scrollToViewport });
           :key="key.pitch"
           type="button"
           class="wkey"
-          :class="pressedClass(key.pitch)"
+          :class="[pressedClass(key.pitch), targetClass(key.pitch)]"
           :aria-label="`${noteNameOf(key.pitch)} 白键`"
           @pointerdown="onDown(key.pitch, $event)"
           @pointerup="emit('release', key.pitch)"
@@ -127,7 +138,7 @@ defineExpose({ scrollToViewport });
           :key="key.pitch"
           type="button"
           class="bkey"
-          :class="pressedClass(key.pitch)"
+          :class="[pressedClass(key.pitch), targetClass(key.pitch)]"
           :style="blackStyle(key)"
           :aria-label="`${noteNameOf(key.pitch)} 黑键`"
           @pointerdown="onDown(key.pitch, $event)"
@@ -137,7 +148,7 @@ defineExpose({ scrollToViewport });
           @contextmenu.prevent
         >
           <span v-if="hintOf(key.pitch)" class="bkey__tip">
-            <span class="bkey__mod">{{ modifierSymbol(key.pitch) }}</span>
+            <span v-if="modifierSymbol(key.pitch)" class="bkey__mod">{{ modifierSymbol(key.pitch) }}</span>
             <span class="bkey__char">{{ hintOf(key.pitch) }}</span>
           </span>
           <span v-else-if="nameOf(key.pitch)" class="bkey__tip bkey__tip--name">
@@ -215,6 +226,22 @@ defineExpose({ scrollToViewport });
   height: 100%;
   display: flex;
   position: relative;
+}
+
+/* 编辑键位：整块琴键可点选 */
+.piano-wrap.is-editing .wkey,
+.piano-wrap.is-editing .bkey {
+  cursor: crosshair;
+}
+
+.wkey.is-target {
+  outline: 2px solid #cfa46a;
+  outline-offset: -3px;
+}
+
+.bkey.is-target {
+  outline: 2px solid #cfa46a;
+  outline-offset: -2px;
 }
 
 /* ------------------------------------------------ AutoPiano: .wkey */
