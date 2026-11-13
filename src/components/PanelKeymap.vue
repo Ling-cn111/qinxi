@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import KeyMapDiagram from './KeyMapDiagram.vue';
-import { KEYMAP_ROWS, type PianoKeyMap } from '@/keyboard/keyMap';
+import type { PianoKeyMap } from '@/keyboard/keyMap';
 import { MAX_SCHEME_NAME, type KeymapScheme } from '@/keyboard/keymapSchemes';
 import { midiToName } from '@/audio/note';
 
@@ -46,6 +46,21 @@ let resetTimer: number | undefined;
 const saving = ref(false);
 const draftName = ref('');
 const nameInput = ref<HTMLInputElement | null>(null);
+/** 「内容没变」的提示：只在点保存时短暂显示 */
+const saveNote = ref('');
+let saveNoteTimer: number | undefined;
+
+/**
+ * 当前键位是否和内置 C大调 / 某个已保存方案完全一致。
+ * `activeSchemeId` 由 App 用签名算出来，为 null 才说明有未保存的改动。
+ */
+const duplicateOf = computed(() => {
+  const id = props.activeSchemeId;
+  if (id === null) return null;
+  if (id === 'default') return '当前就是「C大调」默认键位';
+  const same = props.schemes.find((item) => item.id === id);
+  return same ? `与「${same.name}」内容相同` : null;
+});
 
 const clearedNames = computed(() =>
   [...props.keyMap.clearedPitches].sort((a, b) => a - b).map((pitch) => midiToName(pitch)),
@@ -81,6 +96,16 @@ function nextName(): string {
 }
 
 function startSave(): void {
+  // 内容没变化就不该再存一份：直接说明，不打开起名框
+  if (duplicateOf.value) {
+    saveNote.value = `${duplicateOf.value}，未新增`;
+    window.clearTimeout(saveNoteTimer);
+    saveNoteTimer = window.setTimeout(() => {
+      saveNote.value = '';
+    }, 3600);
+    return;
+  }
+  saveNote.value = '';
   saving.value = true;
   draftName.value = nextName();
   void nextTick(() => {
@@ -116,7 +141,10 @@ function onReset(): void {
   emit('reset');
 }
 
-onBeforeUnmount(() => window.clearTimeout(resetTimer));
+onBeforeUnmount(() => {
+  window.clearTimeout(resetTimer);
+  window.clearTimeout(saveNoteTimer);
+});
 </script>
 
 <template>
@@ -178,6 +206,8 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
       </div>
     </div>
 
+    <p v-if="saveNote" class="save-note">{{ saveNote }}</p>
+
     <form v-if="saving" class="save-form" @submit.prevent="submitSave">
       <input
         ref="nameInput"
@@ -193,14 +223,6 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
       <button type="button" class="ghost ghost--small" @click="cancelSave">取消</button>
       <span class="save-form__tip">只存与默认布局不同的键位 · 回车确认</span>
     </form>
-
-    <div class="layout" role="table" aria-label="默认键位布局">
-      <div v-for="row in KEYMAP_ROWS" :key="row.label" class="layout__row" role="row">
-        <span class="layout__label" role="cell">{{ row.label }}</span>
-        <span class="layout__keys" role="cell">{{ row.keys }}</span>
-        <span class="layout__range" role="cell">{{ row.range }}</span>
-      </div>
-    </div>
 
     <p class="status">{{ statusText }}</p>
 
@@ -357,6 +379,15 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
   color: #e8b4a2;
 }
 
+/* 「内容没变化」的提示：不打开起名框，就在按钮下方说一句 */
+.save-note {
+  margin: 10px 0 0;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  color: #d9a97c;
+}
+
 /* 保存方案：就地起名，不用浏览器弹窗 */
 .save-form {
   display: flex;
@@ -396,43 +427,6 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
   font-size: 11px;
   letter-spacing: 0.03em;
   color: rgba(232, 217, 194, 0.42);
-}
-
-/* 默认布局：一排一个八度的文字表 */
-.layout {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-}
-
-.layout__row {
-  display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: baseline;
-  padding: 8px 10px 8px 2px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 12px;
-}
-
-.layout__label {
-  color: rgba(231, 227, 220, 0.34);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-}
-
-.layout__keys {
-  letter-spacing: 0.02em;
-  line-height: 1.95;
-  color: rgba(231, 227, 220, 0.74);
-}
-
-.layout__range {
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  color: rgba(229, 199, 154, 0.5);
-  white-space: nowrap;
 }
 
 .status {

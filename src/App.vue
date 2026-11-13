@@ -212,6 +212,18 @@ function applyScheme(id: string): void {
 
 /** 把当前键位存成一个具名方案（只存与默认布局不同的条目） */
 function saveScheme(rawName: string): void {
+  // 内容没变化就不新增：默认布局、或与某个已存方案完全一致
+  const signature = bindingsSignature(customBindings.value);
+  if (signature === '') {
+    flash('当前就是「C大调」默认键位，未新增');
+    return;
+  }
+  const same = schemes.value.find((item) => bindingsSignature(item.bindings) === signature);
+  if (same) {
+    flash(`与「${same.name}」内容相同，未新增`);
+    return;
+  }
+
   const name = rawName.trim().slice(0, MAX_SCHEME_NAME);
   if (!name) {
     flash('方案名不能为空');
