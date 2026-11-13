@@ -95,12 +95,22 @@ const palette = {
   red: '255, 110, 92',
 };
 
-/** '#rrggbb' → 'r, g, b'（读主题的强调亮色当金色） */
+/** '#rrggbb' → 'r, g, b'（读主题的强调亮色当金色基底） */
 function hexToRgb(hex: string): string {
   const match = /^#([0-9a-f]{6})$/i.exec(hex.trim());
   if (!match) return '';
   const value = Number.parseInt(match[1], 16);
   return `${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}`;
+}
+
+/**
+ * 把金色压得更饱和（绿蓝通道收窄）：主题的 accent-strong 是淡金，
+ * 跟白光拉不开差距；压完是明显的琥珀金，和 Good 的白光一眼可分。
+ */
+function saturateGold(rgb: string): string {
+  const parts = rgb.split(',').map((part) => Number(part.trim()));
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return '255, 160, 42';
+  return `${parts[0]}, ${Math.round(parts[1] * 0.78)}, ${Math.round(parts[2] * 0.35)}`;
 }
 
 function readPalette(): void {
@@ -110,7 +120,7 @@ function readPalette(): void {
   palette.accent = pick('--qin-accent-rgb', palette.accent);
   palette.ink = pick('--qin-ink-rgb', palette.ink);
   palette.white = pick('--qin-w-rgb', palette.white);
-  palette.gold = hexToRgb(pick('--qin-accent-strong', '#ffc65c')) || palette.gold;
+  palette.gold = saturateGold(hexToRgb(pick('--qin-accent-strong', '#ffc65c')));
   palette.red = pick('--qin-danger-rgb', palette.red);
 }
 
@@ -210,27 +220,42 @@ function draw(): void {
     if (!geo) continue;
     const x = (geo.left + geo.width / 2) * unit - scrollLeft;
     const t = age / FLASH_SECONDS;
-    // 配色：Perfect 金光、Good 白光、Miss 红光
-    const color =
-      hit.grade === 'perfect' ? palette.gold
-      : hit.grade === 'miss' ? palette.red
-      : palette.white;
-    const strength = hit.grade === 'perfect' ? 1 : hit.grade === 'good' ? 0.7 : 0.75;
-    const alpha = (1 - t) * strength;
+    // 三档观感刻意拉开：Perfect 又大又亮（双环 + 亮芯），Good 小而淡，Miss 红
+    const look =
+      hit.grade === 'perfect'
+        ? { color: palette.gold, strength: 1, ring: 7 + 20 * t, glow: 16, barH: 4 }
+        : hit.grade === 'good'
+          ? { color: palette.white, strength: 0.45, ring: 4 + 8 * t, glow: 5, barH: 3 }
+          : { color: palette.red, strength: 0.75, ring: 5 + 12 * t, glow: 9, barH: 3 };
+    const alpha = (1 - t) * look.strength;
 
     // 判定线上的一小段亮条，向两边收
     const halfWidth = (geo.width * unit) / 2 * (1 - 0.35 * t);
     ctx.save();
-    ctx.shadowColor = `rgba(${color}, ${alpha})`;
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = `rgba(${color}, ${alpha})`;
-    ctx.fillRect(x - halfWidth, lineY - 3, halfWidth * 2, 3);
-    // 向上散开的光点
+    ctx.shadowColor = `rgba(${look.color}, ${alpha})`;
+    ctx.shadowBlur = look.glow;
+    ctx.fillStyle = `rgba(${look.color}, ${alpha})`;
+    ctx.fillRect(x - halfWidth, lineY - look.barH, halfWidth * 2, look.barH);
+
+    // 向上散开的光弧
     ctx.beginPath();
-    ctx.arc(x, lineY - 4, 4 + 14 * t, Math.PI, 0);
+    ctx.arc(x, lineY - look.barH - 1, look.ring * 0.6, Math.PI, 0);
     ctx.closePath();
-    ctx.fillStyle = `rgba(${color}, ${alpha * 0.55})`;
+    ctx.fillStyle = `rgba(${look.color}, ${alpha * 0.5})`;
     ctx.fill();
+
+    // Perfect 独有：外圈扩散环 + 中心亮芯，进一步和白光拉开
+    if (hit.grade === 'perfect') {
+      ctx.strokeStyle = `rgba(${look.color}, ${alpha * 0.9})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, lineY - 3, 6 + 20 * t, Math.PI, 0);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, lineY - 3, 3.5 * (1 - t * 0.6), 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, 244, 214, ${alpha})`;
+      ctx.fill();
+    }
     ctx.restore();
   }
 
