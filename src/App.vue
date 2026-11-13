@@ -5,6 +5,7 @@ import ControlDeck from '@/components/ControlDeck.vue';
 import NoteVisualizer from '@/components/NoteVisualizer.vue';
 import ThemeMenu from '@/components/ThemeMenu.vue';
 import UiToggle from '@/components/UiToggle.vue';
+import FollowCanvas from '@/components/FollowCanvas.vue';
 import { PianoEngine, type EngineStatus } from '@/audio/PianoEngine';
 import {
   BASE_START_MIDI,
@@ -31,6 +32,7 @@ import { midiToName } from '@/audio/note';
 import { BUILT_IN_SCORES, DEFAULT_SCORE_ID, findScore, loadScore } from '@/data/scores';
 import { activeNotesAt, samePitchSet } from '@/transport/activeNotes';
 import { Transport, type TransportSnapshot } from '@/transport/transport';
+import { collectMissed, judgeHit, type Grade, type Judgment } from '@/game/judge';
 import type { NoteEvent } from '@/types';
 import type { NoteLabelMode } from '@/keyboard/labels';
 import { DEFAULT_VIEWPORT_ID, PIANO_VIEWPORTS, type PianoViewport } from '@/keyboard/layout';
@@ -97,16 +99,30 @@ const diagramMode = ref<'char' | 'note'>('note');
 // 自定义键位
 const editMode = ref(false);
 
-// ---------------------------------------------------------------- 自动播放
+// ---------------------------------------------------------------- 自动播放 / 跟弹
 /** 选中的内置曲谱 */
 const scoreId = ref<string>(DEFAULT_SCORE_ID);
 /** idle = 没在播；playing / paused 对应 Transport 的状态 */
 const playState = ref<'idle' | 'playing' | 'paused'>('idle');
+/**
+ * 播放模式：listen = 自动播放（引擎发声，琴键自己亮）；
+ * follow = 跟弹（Transport 只当节拍器，声音由用户按键发，Canvas 落音符 + 判定）。
+ */
+const playMode = ref<'listen' | 'follow'>('listen');
 /** 自动播放正在响的音（琴键高亮的数据源，渲染循环里更新） */
 const autoPressed = ref<ReadonlySet<number>>(new Set());
 const playProgressText = ref('');
 /** 谱面按「默认布局（C2 起）+ 用户自定义」解释，不跟随音区视口 —— 换音区不能让曲子变调 */
 const baseKeyMap = computed(() => new PianoKeyMap({ custom: customBindings.value }));
+const currentNotesRef = shallowRef<NoteEvent[]>([]);
+/** 跟弹：当前谱面的 BPM（决定下落速度） */
+const followBpm = ref(96);
+/** 跟弹：音符下标 → 判定等级。判定频率高，走可变对象，不走 Vue 响应式 */
+const judgedMap = new Map<number, Grade>();
+const followStats = reactive({ perfect: 0, great: 0, good: 0, miss: 0 });
+const lastGrade = ref<Grade | null>(null);
+/** 跟弹进行中（判定与清扫挂在这个条件下） */
+const followActive = computed(() => playMode.value === 'follow' && playState.value === 'playing');
 let currentNotes: NoteEvent[] = [];
 let renderRafId = 0;
 
@@ -119,7 +135,10 @@ const transport = new Transport({
   now: () => engine.now(),
   bpm: 96,
   callbacks: {
-    onNote: (item) => engine.playNote(item.pitch, item.when, item.duration, item.velocity),
+    // 跟弹模式下 Transport 只当节拍器：不发声，声音由用户按键发
+    onNote: (item) => {
+      if (playMode.value === 'listen') engine.playNote(item.pitch, item.when, item.duration, item.velocity);
+    },
     onCancelAll: () => engine.stopAll(),
     onTick: (snapshot) => updateProgress(snapshot),
     onEnd: () => onPlaybackEnd(),
@@ -146,14 +165,76 @@ function renderAutoplayKeys(): void {
   renderRafId = playState.value === 'playing' ? requestAnimationFrame(renderAutoplayKeys) : 0;
 }
 
-function startRenderLoop(): void {
-  if (renderRafId) cancelAnimationFrame(renderRafId);
-  renderRafId = requestAnimationFrame(renderAutoplayKeys);
-}
-
 function stopRenderLoop(): void {
   if (renderRafId) cancelAnimationFrame(renderRafId);
   renderRafId = 0;
+}
+
+// ---------------------------------------------------------------- 跟弹判定
+
+function resetFollowProgress(): void {
+  judgedMap.clear();
+  followStats.perfect = 0;
+  followStats.great = 0;
+  followStats.good = 0;
+  followStats.miss = 0;
+  lastGrade.value = null;
+}
+
+const GRADE_LABEL: Record<Grade, string> = { perfect: 'Perfect', great: 'Great', good: 'Good', miss: 'Miss' };
+
+function fmtDelta(deltaMs: number): string {
+  const rounded = Math.round(deltaMs);
+  return rounded > 0 ? `+${rounded}` : `${rounded}`;
+}
+
+/** 记一条判定：统计 + 控制台日志（验收看这里） */
+function recordJudgment(hit: Judgment): void {
+  followStats[hit.grade] += 1;
+  lastGrade.value = hit.grade;
+  if (hit.note) {
+    console.info(
+      `[琴习·判定] ${GRADE_LABEL[hit.grade]} ${midiToName(hit.note.pitch)} Δ${fmtDelta(hit.deltaMs)}ms`,
+    );
+  } else {
+    console.info(`[琴习·判定] MISS（错音）${midiToName(hit.pitch)}`);
+  }
+}
+
+/** 用户按键（键盘 / 点琴键都走这里）：音高 + 时间双重判定 */
+function judgeFollowPress(pitch: number): void {
+  // hitBeat 从 AudioContext.currentTime 换算（transport.rawBeat 内部就是 beatAtTime，
+  // 与自动播放的排程锚点同源同刻）
+  const hit = judgeHit(
+    { pitch, hitBeat: transport.rawBeat },
+    currentNotesRef.value,
+    judgedMap,
+    transport.secondsPerBeat,
+  );
+  if (hit.note) judgedMap.set(hit.index, hit.grade);
+  recordJudgment(hit);
+}
+
+/** 漏按清扫：把窗口已过、还没判的音记成 Miss */
+function recordMissed(index: number): void {
+  const item = currentNotesRef.value[index];
+  judgedMap.set(index, 'miss');
+  followStats.miss += 1;
+  lastGrade.value = 'miss';
+  console.info(`[琴习·判定] MISS（漏按）${midiToName(item.pitch)} @${item.startBeat}拍`);
+}
+
+/** 跟弹渲染循环：每帧清扫一次漏按（判定本身在按键事件里做，这里只兜底） */
+function renderFollowLoop(): void {
+  for (const index of collectMissed(currentNotesRef.value, judgedMap, transport.rawBeat, transport.secondsPerBeat)) {
+    recordMissed(index);
+  }
+  renderRafId = followActive.value ? requestAnimationFrame(renderFollowLoop) : 0;
+}
+
+function startRenderLoop(): void {
+  if (renderRafId) cancelAnimationFrame(renderRafId);
+  renderRafId = playMode.value === 'follow' ? requestAnimationFrame(renderFollowLoop) : requestAnimationFrame(renderAutoplayKeys);
 }
 
 function startPlayback(): void {
@@ -167,6 +248,9 @@ function startPlayback(): void {
     console.warn('[琴习] 谱面解析有警告：', parsed.warnings);
   }
   currentNotes = parsed.notes;
+  currentNotesRef.value = parsed.notes;
+  followBpm.value = score.bpm;
+  resetFollowProgress();
   transport.load(parsed.notes, { bpm: score.bpm });
   transport.play();
   playState.value = 'playing';
@@ -191,6 +275,13 @@ function togglePlay(): void {
 }
 
 function stopPlayback(): void {
+  // 停止前先把跟弹里「已落过线但没判」的音清成 Miss（stop 会把拍位归零）
+  if (followActive.value) {
+    const beat = transport.rawBeat;
+    for (let index = 0; index < currentNotesRef.value.length; index += 1) {
+      if (!judgedMap.has(index) && currentNotesRef.value[index].startBeat < beat) recordMissed(index);
+    }
+  }
   transport.stop();
   playState.value = 'idle';
   stopRenderLoop();
@@ -199,6 +290,12 @@ function stopPlayback(): void {
 }
 
 function onPlaybackEnd(): void {
+  // 播完：剩下没弹的音全部记 Miss（漏按）
+  if (playMode.value === 'follow') {
+    for (let index = 0; index < currentNotesRef.value.length; index += 1) {
+      if (!judgedMap.has(index)) recordMissed(index);
+    }
+  }
   playState.value = 'idle';
   stopRenderLoop();
   autoPressed.value = new Set();
@@ -207,6 +304,11 @@ function onPlaybackEnd(): void {
 
 // 换曲目：正在播/暂停中都先停，避免「暂停在 A 曲第 3 拍、切到 B 曲接着放」的怪状态
 watch(scoreId, () => {
+  if (playState.value !== 'idle') stopPlayback();
+});
+
+// 换模式：正在播就先停（自动播放的发声方式和跟弹完全不同，不能热切）
+watch(playMode, () => {
   if (playState.value !== 'idle') stopPlayback();
 });
 
@@ -410,7 +512,12 @@ function deleteScheme(id: string): void {
 
 function pressPitch(pitch: number, velocity = 100): void {
   void engine.start();
-  if (editMode.value) editPitch.value = pitch;
+  if (editMode.value) {
+    editPitch.value = pitch;
+  } else if (followActive.value) {
+    // 跟弹中：这次按键先送判定（键盘与点琴键共用此路径）
+    judgeFollowPress(pitch);
+  }
   if (pressed.has(pitch)) return;
   pressed.add(pitch);
   engine.noteOn(pitch, velocity);
@@ -586,7 +693,19 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="tools">
-          <div class="player" role="group" aria-label="自动播放">
+          <div class="player" role="group" aria-label="播放与跟弹">
+            <div class="mode-switch" role="group" aria-label="播放模式">
+              <button
+                type="button"
+                :class="{ 'is-active': playMode === 'listen' }"
+                @click="playMode = 'listen'"
+              >自动</button>
+              <button
+                type="button"
+                :class="{ 'is-active': playMode === 'follow' }"
+                @click="playMode = 'follow'"
+              >跟弹</button>
+            </div>
             <select v-model="scoreId" class="player__select" aria-label="选择曲谱" :disabled="playState !== 'idle'">
               <option v-for="item in BUILT_IN_SCORES" :key="item.id" :value="item.id">{{ item.title }}</option>
             </select>
@@ -604,6 +723,10 @@ onBeforeUnmount(() => {
             </button>
             <button type="button" class="text-btn" :disabled="playState === 'idle'" @click="stopPlayback">停止</button>
             <span class="player__beat">{{ playProgressText }}</span>
+            <span v-if="playMode === 'follow' && playState !== 'idle'" class="player__judge">
+              <b :class="`grade-${lastGrade ?? 'none'}`">{{ lastGrade ? GRADE_LABEL[lastGrade] : '—' }}</b>
+              <span>P {{ followStats.perfect }} · G {{ followStats.great }} · Good {{ followStats.good }} · Miss {{ followStats.miss }}</span>
+            </span>
           </div>
           <button type="button" class="text-btn" @click="releaseAll">全部松开</button>
         </div>
@@ -621,7 +744,18 @@ onBeforeUnmount(() => {
         :edit-pitch="editPitch"
         @press="pressPitch"
         @release="releasePitch"
-      />
+      >
+        <template #overlay>
+          <FollowCanvas
+            v-if="playMode === 'follow' && playState !== 'idle'"
+            :notes="currentNotesRef"
+            :judged="judgedMap"
+            :get-beat="() => transport.rawBeat"
+            :playing="playState === 'playing'"
+            :bpm="followBpm"
+          />
+        </template>
+      </PianoKeyboard>
 
       <ControlDeck
         v-model:tab="deckTab"
@@ -879,6 +1013,61 @@ onBeforeUnmount(() => {
 }
 
 /* ------------------------------------------------------------------ 播放控制条 */
+.mode-switch {
+  display: inline-flex;
+  border: 1px solid rgba(var(--qin-w-rgb), 0.14);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.mode-switch button {
+  appearance: none;
+  margin: 0;
+  padding: 4px 12px;
+  border: 0;
+  background: transparent;
+  color: rgba(var(--qin-w-rgb), 0.42);
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.mode-switch button + button {
+  border-left: 1px solid rgba(var(--qin-w-rgb), 0.14);
+}
+
+.mode-switch button:hover {
+  color: rgba(var(--qin-ink-rgb), 0.85);
+}
+
+.mode-switch button.is-active {
+  background: var(--qin-surface-active);
+  color: var(--qin-accent-strong);
+}
+
+.player__judge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(var(--qin-w-rgb), 0.38);
+}
+
+.player__judge b {
+  min-width: 62px;
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.player__judge .grade-perfect { color: var(--qin-accent-strong); }
+.player__judge .grade-great { color: rgb(var(--qin-ink-rgb)); }
+.player__judge .grade-good { color: rgba(var(--qin-ink-rgb), 0.66); }
+.player__judge .grade-miss { color: var(--qin-danger-strong); }
+
 .player {
   display: flex;
   align-items: center;

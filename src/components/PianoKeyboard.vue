@@ -123,6 +123,8 @@ defineExpose({ scrollToViewport });
 
     <div ref="viewportRef" class="piano-key-wrap">
       <div class="keybed" :style="{ width: `${KEYBED_WIDTH_PERCENT}%` }">
+        <!-- 跟弹模式的下落音符画布挂在这里：随键床滚动，与琴键坐标对齐 -->
+        <slot name="overlay" />
         <button
           v-for="key in whiteKeys"
           :key="key.pitch"
