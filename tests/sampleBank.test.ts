@@ -12,8 +12,8 @@ describe('SampleBank', () => {
 
   it('选择最近的采样锚点并算出播放速率', () => {
     const bank = new SampleBank();
-    bank.set({ midi: 60, buffer: fakeBuffer('C4'), source: 'remote' });
-    bank.set({ midi: 72, buffer: fakeBuffer('C5'), source: 'remote' });
+    bank.set({ midi: 60, buffer: fakeBuffer('C4'), source: 'autopiano' });
+    bank.set({ midi: 72, buffer: fakeBuffer('C5'), source: 'autopiano' });
 
     const exact = bank.find(60);
     expect(exact?.anchorMidi).toBe(60);
@@ -28,16 +28,44 @@ describe('SampleBank', () => {
     expect(lower?.ratio).toBeCloseTo(Math.pow(2, 0.5), 6);
   });
 
-  it('远程采样不会被合成锚点覆盖，反之可以升级', () => {
+  it('采样范围外的音用最近锚点移调，保证 88 键不哑', () => {
+    const bank = new SampleBank();
+    bank.set({ midi: 36, buffer: fakeBuffer('C2'), source: 'autopiano' });
+    bank.set({ midi: 96, buffer: fakeBuffer('C7'), source: 'autopiano' });
+
+    const lowest = bank.find(21); // A0，比最低采样低 15 个半音
+    expect(lowest?.anchorMidi).toBe(36);
+    expect(lowest?.ratio).toBeCloseTo(Math.pow(2, -15 / 12), 6);
+
+    const highest = bank.find(108); // C8，比最高采样高 12 个半音
+    expect(highest?.anchorMidi).toBe(96);
+    expect(highest?.ratio).toBeCloseTo(2, 6);
+  });
+
+  it('来源优先级：autopiano > salamander > synth，低优先级不覆盖高优先级', () => {
     const bank = new SampleBank();
     bank.set({ midi: 60, buffer: fakeBuffer('synth'), source: 'synth' });
-    bank.set({ midi: 60, buffer: fakeBuffer('remote'), source: 'remote' });
-    expect(bank.find(60)?.buffer).toEqual(fakeBuffer('remote'));
+    bank.set({ midi: 60, buffer: fakeBuffer('salamander'), source: 'salamander' });
+    expect(bank.find(60)?.buffer).toEqual(fakeBuffer('salamander'));
 
+    bank.set({ midi: 60, buffer: fakeBuffer('autopiano'), source: 'autopiano' });
+    expect(bank.find(60)?.buffer).toEqual(fakeBuffer('autopiano'));
+
+    // 再回退低优先级不会顶掉
     bank.set({ midi: 60, buffer: fakeBuffer('synth-2'), source: 'synth' });
-    expect(bank.find(60)?.buffer).toEqual(fakeBuffer('remote'));
+    expect(bank.find(60)?.buffer).toEqual(fakeBuffer('autopiano'));
     expect(bank.size).toBe(1);
-    expect(bank.remoteCount).toBe(1);
+    expect(bank.countOf('autopiano')).toBe(1);
+  });
+
+  it('dropSource 只清掉指定来源', () => {
+    const bank = new SampleBank();
+    bank.set({ midi: 69, buffer: fakeBuffer('synth'), source: 'synth' });
+    bank.set({ midi: 60, buffer: fakeBuffer('auto'), source: 'autopiano' });
+    bank.dropSource('synth');
+    expect(bank.size).toBe(1);
+    expect(bank.find(69)?.anchorMidi).toBe(60);
+    expect(bank.find(69)?.source).toBe('autopiano');
   });
 
   it('库为空时 resolve 会调用工厂生成兜底锚点，且只生成一次', () => {
@@ -61,15 +89,14 @@ describe('SampleBank', () => {
     const bank = new SampleBank();
     bank.prewarm((midi) => fakeBuffer(`s-${midi}`), [57, 69, 81]);
     expect(bank.size).toBe(3);
-    const ids = bank.list().map((anchor) => anchor.midi);
-    expect(ids).toEqual([57, 69, 81]);
+    expect(bank.list().map((anchor) => anchor.midi)).toEqual([57, 69, 81]);
   });
 
   it('anchor 按音高升序排列', () => {
     const bank = new SampleBank();
-    bank.set({ midi: 81, buffer: fakeBuffer('a'), source: 'remote' });
-    bank.set({ midi: 45, buffer: fakeBuffer('b'), source: 'remote' });
-    bank.set({ midi: 60, buffer: fakeBuffer('c'), source: 'remote' });
+    bank.set({ midi: 81, buffer: fakeBuffer('a'), source: 'autopiano' });
+    bank.set({ midi: 45, buffer: fakeBuffer('b'), source: 'autopiano' });
+    bank.set({ midi: 60, buffer: fakeBuffer('c'), source: 'autopiano' });
     expect(bank.list().map((anchor) => anchor.midi)).toEqual([45, 60, 81]);
   });
 });

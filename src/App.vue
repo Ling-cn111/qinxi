@@ -12,6 +12,7 @@ const pressed = reactive(new Set<number>());
 const status = ref<EngineStatus>(engine.status);
 const volume = ref(75);
 const showLabels = ref(true);
+const panelOpen = ref(false);
 const recent = ref<string[]>([]);
 
 /** 记录物理按键当前锁定的音高，避免 Shift 状态变化导致"松不掉" */
@@ -20,19 +21,27 @@ const heldKeys = new Map<string, number>();
 let unsubscribeStatus: (() => void) | null = null;
 
 const statusTone = computed(() => {
-  if (status.value.source === 'remote') return 'ok';
-  if (status.value.source === 'synth') return 'warn';
+  if (status.value.source === 'autopiano') return 'ready';
+  if (status.value.source === 'salamander') return 'fallback';
+  if (status.value.source === 'synth') return 'fallback';
   return 'idle';
 });
 
-const statusLabel = computed(() => {
-  if (status.value.source === 'remote') return 'Salamander 钢琴采样';
-  if (status.value.source === 'synth') return '内置合成音色';
-  return '音频待启用';
+const sourceLabel = computed(() => {
+  switch (status.value.source) {
+    case 'autopiano':
+      return 'AutoPiano 采样';
+    case 'salamander':
+      return '降级采样';
+    case 'synth':
+      return '合成音色';
+    default:
+      return '音频待启用';
+  }
 });
 
 const loadedText = computed(() =>
-  status.value.total > 0 ? `${status.value.loaded}/${status.value.total}` : '',
+  status.value.total > 0 ? `${status.value.loaded}/${status.value.total}` : '—',
 );
 
 const rangeText = computed(() => {
@@ -46,7 +55,7 @@ function pressPitch(pitch: number, velocity = 100): void {
   if (pressed.has(pitch)) return;
   pressed.add(pitch);
   engine.noteOn(pitch, velocity);
-  recent.value = [midiToName(pitch), ...recent.value].slice(0, 12);
+  recent.value = [midiToName(pitch), ...recent.value].slice(0, 8);
 }
 
 function releasePitch(pitch: number): void {
@@ -119,24 +128,43 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app">
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand__mark">琴</span>
-        <div class="brand__text">
-          <strong>琴习</strong>
-          <em>QinXi</em>
-        </div>
+    <header class="bar">
+      <div class="bar__brand">
+        <span class="bar__name">琴习</span>
+        <span class="bar__latin">QINXI</span>
       </div>
 
-      <div class="topbar__right">
-        <div class="status" :data-tone="statusTone">
-          <span class="status__dot"></span>
-          <span class="status__label">{{ statusLabel }}</span>
-          <span v-if="loadedText" class="status__count">{{ loadedText }}</span>
+      <div class="bar__right">
+        <div class="source" :data-state="statusTone">
+          <span class="source__dot" aria-hidden="true"></span>
+          <span class="source__label">{{ sourceLabel }}</span>
+          <span v-if="status.total > 0" class="source__count">{{ loadedText }}</span>
         </div>
 
-        <label class="volume">
-          <span>音量</span>
+        <div class="volume">
+          <svg class="volume__icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M2.6 6.2h2.2L8.2 3.4v9.2L4.8 9.8H2.6z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.15"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M10.3 6.1a3.1 3.1 0 0 1 0 3.8"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.15"
+              stroke-linecap="round"
+            />
+            <path
+              d="M12.2 4.6a5.1 5.1 0 0 1 0 6.8"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.15"
+              stroke-linecap="round"
+            />
+          </svg>
           <input
             type="range"
             min="0"
@@ -146,347 +174,451 @@ onBeforeUnmount(() => {
             aria-label="主音量"
             @input="onVolumeInput"
           />
-        </label>
+        </div>
       </div>
     </header>
 
-    <main class="main">
-      <section class="stage">
-        <div class="stage__head">
-          <div>
-            <h1>自由弹奏</h1>
-            <p class="stage__desc">
-              88 键钢琴，支持电脑键盘与鼠标 / 触屏。第一次按键即可启用音频引擎。
-            </p>
-          </div>
-          <div class="stage__meta">
-            <span class="chip">可弹音域 <b>{{ rangeText }}</b></span>
-            <label class="switch">
-              <input v-model="showLabels" type="checkbox" />
-              <span>显示键位</span>
-            </label>
-            <button type="button" class="ghost" @click="releaseAll">全部松开</button>
-          </div>
+    <main class="stage">
+      <div class="stage__head">
+        <h1>自由弹奏</h1>
+
+        <div class="stage__tools">
+          <span class="meta">可弹 <b>{{ rangeText }}</b></span>
+          <span class="rule" aria-hidden="true"></span>
+          <label class="toggle">
+            <input v-model="showLabels" type="checkbox" />
+            <span>键位标注</span>
+          </label>
+          <span class="rule" aria-hidden="true"></span>
+          <button type="button" class="flat" @click="releaseAll">全部松开</button>
         </div>
+      </div>
 
-        <PianoKeyboard
-          :pressed="pressed"
-          :key-map="keyMap"
-          :show-labels="showLabels"
-          @press="pressPitch"
-          @release="releasePitch"
-        />
+      <PianoKeyboard
+        :pressed="pressed"
+        :key-map="keyMap"
+        :show-labels="showLabels"
+        @press="pressPitch"
+        @release="releasePitch"
+      />
 
-        <div class="stage__foot">
-          <div class="recent">
-            <span class="recent__title">最近音符</span>
-            <div class="recent__list">
-              <span v-for="(note, index) in recent" :key="`${note}-${index}`" class="note-chip">
-                {{ note }}
-              </span>
-              <span v-if="recent.length === 0" class="recent__empty">按下琴键开始</span>
-            </div>
-          </div>
-          <p class="status-text">{{ status.message }}</p>
+      <div class="stage__foot">
+        <div class="readout">
+          <span class="readout__label">最近</span>
+          <span class="readout__notes">{{ recent.length ? recent.join('  ') : '—' }}</span>
         </div>
-      </section>
-
-      <section class="legend">
-        <h2>键盘映射</h2>
-        <ul>
-          <li><b>白键</b>四排由低到高：<code>Z X C V B N M , . /</code> → <code>A S D F G H J K L ; '</code> → <code>Q W E R T Y U I O P [ ]</code> → <code>1 2 3 4 5 6 7 8 9 0</code>（C2–C8）</li>
-          <li><b>黑键</b>用 <code>Shift</code> + 左侧白键（如 <code>Shift+Z</code> = C♯2），也接受 <code>Alt</code> + 右侧白键作为同义写法。</li>
-          <li>键位表定义在 <code>src/keyboard/keyMap.ts</code>，可自行调整。</li>
-        </ul>
-      </section>
+        <p class="hint">{{ status.message }}</p>
+      </div>
     </main>
+
+    <section class="panel" :class="{ 'is-open': panelOpen }">
+      <button type="button" class="panel__head" @click="panelOpen = !panelOpen">
+        <svg class="panel__chev" viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M2.2 3.8 5 6.6l2.8-2.8" fill="none" stroke="currentColor" stroke-width="1.1" />
+        </svg>
+        <span>键盘映射</span>
+        <span class="panel__sub">白键四排 · 黑键 Shift</span>
+      </button>
+
+      <div v-show="panelOpen" class="panel__body">
+        <div class="row">
+          <span class="row__key">下排</span>
+          <span class="row__val">Z X C V B N M , . /</span>
+          <span class="row__note">C2 起</span>
+        </div>
+        <div class="row">
+          <span class="row__key">中排</span>
+          <span class="row__val">A S D F G H J K L ; '</span>
+          <span class="row__note">F3 起</span>
+        </div>
+        <div class="row">
+          <span class="row__key">上排</span>
+          <span class="row__val">Q W E R T Y U I O P [ ]</span>
+          <span class="row__note">C5 起</span>
+        </div>
+        <div class="row">
+          <span class="row__key">数字排</span>
+          <span class="row__val">1 2 3 4 5 6 7 8 9 0</span>
+          <span class="row__note">A6 起</span>
+        </div>
+        <div class="row">
+          <span class="row__key">黑键</span>
+          <span class="row__val">Shift + 左侧白键（⌥ + 右侧白键同义）</span>
+          <span class="row__note">如 ⇧Z = C♯2</span>
+        </div>
+        <p class="panel__foot">
+          键位表定义在 <code>src/keyboard/keyMap.ts</code>；超出 C2–C8 的音用相邻采样移调发声。
+        </p>
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
 .app {
-  min-height: 100vh;
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
 }
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+/* ------------------------------------------------------------------ 顶栏 */
+.bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 14px clamp(16px, 4vw, 44px);
-  background: rgba(250, 248, 243, 0.82);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(43, 29, 25, 0.08);
+  gap: 18px;
+  padding: 16px clamp(18px, 4vw, 46px);
+  border-bottom: 1px solid rgba(231, 227, 220, 0.07);
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.brand__mark {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  background: linear-gradient(160deg, #43302a, #241a17);
-  color: #f3e3c3;
-  font-family: 'Songti SC', 'Noto Serif SC', serif;
-  font-size: 20px;
-  box-shadow: 0 4px 12px rgba(43, 29, 25, 0.25);
-}
-
-.brand__text {
+.bar__brand {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 9px;
 }
 
-.brand__text strong {
-  font-size: 18px;
-  letter-spacing: 0.08em;
-  color: #2b1d19;
+.bar__name {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: #e7e3dc;
 }
 
-.brand__text em {
-  font-style: normal;
-  font-size: 12px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: rgba(43, 29, 25, 0.45);
+.bar__latin {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.3em;
+  color: rgba(231, 227, 220, 0.28);
 }
 
-.topbar__right {
+.bar__right {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 22px;
 }
 
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  color: rgba(43, 29, 25, 0.72);
-  background: rgba(43, 29, 25, 0.05);
-  border: 1px solid rgba(43, 29, 25, 0.08);
+.source {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: rgba(231, 227, 220, 0.42);
 }
 
-.status__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #b8afa2;
+.source__dot {
+  width: 5px;
+  height: 5px;
+  background: rgba(231, 227, 220, 0.22);
+  transition: background 200ms ease, box-shadow 200ms ease;
 }
 
-.status[data-tone='ok'] .status__dot {
-  background: #2f8f6b;
-  box-shadow: 0 0 0 3px rgba(47, 143, 107, 0.16);
+.source[data-state='ready'] .source__dot {
+  background: #c99a52;
+  box-shadow: 0 0 0 2px rgba(201, 154, 82, 0.16);
 }
 
-.status[data-tone='warn'] .status__dot {
-  background: #c08a3e;
-  box-shadow: 0 0 0 3px rgba(192, 138, 62, 0.16);
+.source[data-state='fallback'] .source__dot {
+  background: #8a6a3c;
 }
 
-.status__count {
-  font-variant-numeric: tabular-nums;
-  color: rgba(43, 29, 25, 0.42);
+.source[data-state='ready'] .source__label {
+  color: rgba(231, 227, 220, 0.72);
+}
+
+.source__count {
+  color: rgba(231, 227, 220, 0.26);
 }
 
 .volume {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: rgba(43, 29, 25, 0.55);
+  gap: 10px;
+  color: rgba(231, 227, 220, 0.5);
 }
 
-.volume input {
-  width: 110px;
-  accent-color: #8a5a2b;
+.volume__icon {
+  width: 17px;
+  height: 17px;
+  display: block;
 }
 
-.main {
-  width: 100%;
-  max-width: 1360px;
-  margin: 0 auto;
-  padding: clamp(20px, 3vw, 36px) clamp(16px, 4vw, 44px) 56px;
-  display: flex;
-  flex-direction: column;
-  gap: 28px;
+.volume input[type='range'] {
+  appearance: none;
+  width: 104px;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
 }
 
+.volume input[type='range']::-webkit-slider-runnable-track {
+  height: 1px;
+  background: rgba(231, 227, 220, 0.3);
+}
+
+.volume input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: #cfa46a;
+}
+
+.volume input[type='range']::-moz-range-track {
+  height: 1px;
+  background: rgba(231, 227, 220, 0.22);
+}
+
+.volume input[type='range']::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border: 0;
+  border-radius: 50%;
+  background: #cfa46a;
+}
+
+/* ------------------------------------------------------------------ 舞台 */
 .stage {
+  flex: 1;
+  width: 100%;
+  max-width: 1420px;
+  margin: 0 auto;
+  padding: clamp(22px, 3.4vw, 40px) clamp(18px, 4vw, 46px) 18px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  /* 垂直居中，避免宽屏下舞台下方留出大片死区 */
+  justify-content: center;
+  gap: 14px;
 }
 
 .stage__head {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 18px;
   flex-wrap: wrap;
 }
 
 .stage__head h1 {
-  margin: 0 0 6px;
-  font-size: clamp(22px, 2.4vw, 28px);
-  letter-spacing: 0.02em;
-  color: #241a17;
-}
-
-.stage__desc {
   margin: 0;
-  font-size: 13.5px;
-  color: rgba(43, 29, 25, 0.55);
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #ded9d0;
 }
 
-.stage__meta {
+.stage__tools {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 12px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: rgba(231, 227, 220, 0.36);
 }
 
-.chip {
-  padding: 6px 11px;
-  border-radius: 999px;
-  font-size: 12px;
-  color: rgba(43, 29, 25, 0.66);
-  background: #fffdf8;
-  border: 1px solid rgba(43, 29, 25, 0.1);
+.stage__tools b {
+  font-weight: 400;
+  color: rgba(231, 227, 220, 0.62);
 }
 
-.chip b {
-  color: #8a5a2b;
-  font-variant-numeric: tabular-nums;
+.rule {
+  width: 1px;
+  height: 10px;
+  background: rgba(231, 227, 220, 0.14);
 }
 
-.switch {
+.toggle {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 11px;
-  border-radius: 999px;
-  font-size: 12px;
-  color: rgba(43, 29, 25, 0.66);
-  background: #fffdf8;
-  border: 1px solid rgba(43, 29, 25, 0.1);
+  gap: 8px;
   cursor: pointer;
+  color: rgba(231, 227, 220, 0.42);
 }
 
-.switch input {
-  accent-color: #8a5a2b;
+.toggle input {
+  appearance: none;
+  width: 24px;
+  height: 13px;
+  border: 1px solid rgba(231, 227, 220, 0.2);
+  background: rgba(231, 227, 220, 0.06);
+  position: relative;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
 }
 
-.ghost {
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  color: rgba(43, 29, 25, 0.66);
+.toggle input::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 9px;
+  height: 9px;
+  background: rgba(231, 227, 220, 0.4);
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.toggle input:checked {
+  background: rgba(201, 154, 82, 0.16);
+  border-color: rgba(201, 154, 82, 0.5);
+}
+
+.toggle input:checked::after {
+  transform: translateX(11px);
+  background: #cfa46a;
+}
+
+.flat {
+  padding: 5px 11px;
+  border: 1px solid rgba(231, 227, 220, 0.16);
   background: transparent;
-  border: 1px solid rgba(43, 29, 25, 0.16);
+  color: rgba(231, 227, 220, 0.5);
+  font-family: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
 }
 
-.ghost:hover {
-  background: rgba(43, 29, 25, 0.06);
-  color: #2b1d19;
+.flat:hover {
+  color: #ded9d0;
+  border-color: rgba(231, 227, 220, 0.32);
+  background: rgba(231, 227, 220, 0.05);
 }
 
 .stage__foot {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 16px;
-  flex-wrap: wrap;
-}
-
-.recent {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 26px;
-}
-
-.recent__title {
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  color: rgba(43, 29, 25, 0.35);
-  text-transform: uppercase;
-}
-
-.recent__list {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.note-chip {
-  padding: 3px 9px;
-  border-radius: 7px;
+  padding-top: 4px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 12px;
-  color: #6b4423;
-  background: rgba(192, 138, 62, 0.14);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
 }
 
-.recent__empty {
-  font-size: 12px;
-  color: rgba(43, 29, 25, 0.3);
+.readout {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 14px;
 }
 
-.status-text {
-  margin: 0;
-  font-size: 12px;
-  color: rgba(43, 29, 25, 0.4);
+.readout__label {
+  color: rgba(231, 227, 220, 0.24);
 }
 
-.legend {
-  padding: 20px 22px;
-  border-radius: 14px;
-  background: rgba(255, 253, 248, 0.7);
-  border: 1px solid rgba(43, 29, 25, 0.08);
-}
-
-.legend h2 {
-  margin: 0 0 10px;
-  font-size: 13px;
+.readout__notes {
+  color: rgba(222, 217, 208, 0.62);
   letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: rgba(43, 29, 25, 0.45);
 }
 
-.legend ul {
+.hint {
   margin: 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  font-size: 13px;
-  line-height: 1.7;
-  color: rgba(43, 29, 25, 0.62);
+  color: rgba(231, 227, 220, 0.26);
+  text-align: right;
 }
 
-.legend code {
-  padding: 1px 6px;
-  border-radius: 5px;
-  background: rgba(43, 29, 25, 0.06);
+/* -------------------------------------------------------------- 键位面板 */
+.panel {
+  border-top: 1px solid rgba(231, 227, 220, 0.07);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 11px clamp(18px, 4vw, 46px);
+  border: 0;
+  background: transparent;
+  color: rgba(231, 227, 220, 0.46);
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-align: left;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+.panel__head:hover {
+  color: rgba(231, 227, 220, 0.72);
+}
+
+.panel__chev {
+  width: 9px;
+  height: 9px;
+  transition: transform 160ms ease;
+}
+
+.panel.is-open .panel__chev {
+  transform: rotate(180deg);
+}
+
+.panel__sub {
+  margin-left: auto;
+  color: rgba(231, 227, 220, 0.2);
+  letter-spacing: 0.08em;
+}
+
+.panel__body {
+  padding: 0 clamp(18px, 4vw, 46px) 18px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 136px;
+  gap: 16px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-top: 1px solid rgba(231, 227, 220, 0.06);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.row__key {
+  color: rgba(231, 227, 220, 0.26);
+  letter-spacing: 0.14em;
+}
+
+.row__val {
+  color: rgba(222, 217, 208, 0.68);
+  letter-spacing: 0.12em;
+  word-break: break-word;
+}
+
+.row__note {
+  color: rgba(231, 227, 220, 0.32);
+  text-align: right;
+  letter-spacing: 0.06em;
+}
+
+.panel__foot {
+  margin: 12px 0 0;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(231, 227, 220, 0.3);
+}
+
+.panel__foot code {
+  color: rgba(231, 227, 220, 0.4);
+}
+
+@media (max-width: 720px) {
+  .row {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .row__note {
+    display: none;
+  }
+
+  .stage__tools .rule {
+    display: none;
+  }
 }
 </style>

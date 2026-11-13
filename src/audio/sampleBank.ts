@@ -1,6 +1,13 @@
 import { synthAnchorFor, SYNTH_ANCHOR_STEP } from './synth';
 
-export type AnchorSource = 'synth' | 'remote';
+/** 采样来源，优先级 autopiano > salamander > synth */
+export type AnchorSource = 'autopiano' | 'salamander' | 'synth';
+
+const SOURCE_RANK: Record<AnchorSource, number> = {
+  autopiano: 3,
+  salamander: 2,
+  synth: 1,
+};
 
 export interface SampleAnchor {
   midi: number;
@@ -10,7 +17,7 @@ export interface SampleAnchor {
 
 export interface ResolvedSample {
   buffer: AudioBuffer;
-  /** 播放速率 = 2^((目标音高 - 锚点音高)/12) */
+  /** 播放速率 = 2^((目标音高 - 锚点音高)/12)，用于移调覆盖没有采样的音高 */
   ratio: number;
   anchorMidi: number;
   source: AnchorSource;
@@ -18,7 +25,9 @@ export interface ResolvedSample {
 
 /**
  * 采样库：按音高选择最近的采样锚点，用 playbackRate 做音高换算。
- * 远程采样与合成锚点共用一张表——远程采样到达后就替换同音高的合成锚点。
+ *
+ * 88 键中超出采样范围的音（AutoPiano 只录到 C2–C7）就靠这套机制移调兜底，
+ * 因此键盘不会出现哑键。不同来源的锚点共用一张表，高优先级来源会挤掉低优先级的同音锚点。
  */
 export class SampleBank {
   private anchors: SampleAnchor[] = [];
@@ -27,21 +36,25 @@ export class SampleBank {
     return this.anchors.length;
   }
 
-  get remoteCount(): number {
-    return this.anchors.filter((a) => a.source === 'remote').length;
-  }
-
   list(): readonly SampleAnchor[] {
     return this.anchors;
   }
 
+  countOf(source: AnchorSource): number {
+    return this.anchors.filter((a) => a.source === source).length;
+  }
+
   set(anchor: SampleAnchor): void {
-    // 远程采样优先：不允许合成锚点覆盖已加载的远程采样
     const existing = this.anchors.find((a) => a.midi === anchor.midi);
-    if (existing && existing.source === 'remote' && anchor.source === 'synth') return;
+    // 低优先级来源不允许覆盖高优先级来源（例如合成锚点不能顶掉真实采样）
+    if (existing && SOURCE_RANK[existing.source] > SOURCE_RANK[anchor.source]) return;
     this.anchors = this.anchors.filter((a) => a.midi !== anchor.midi);
     this.anchors.push(anchor);
     this.anchors.sort((a, b) => a.midi - b.midi);
+  }
+
+  dropSource(source: AnchorSource): void {
+    this.anchors = this.anchors.filter((a) => a.source !== source);
   }
 
   clear(): void {
@@ -54,7 +67,11 @@ export class SampleBank {
     let bestDistance = Math.abs(best.midi - pitch);
     for (const anchor of this.anchors) {
       const distance = Math.abs(anchor.midi - pitch);
-      if (distance < bestDistance) {
+      // 同距离时优先高优先级来源
+      if (
+        distance < bestDistance ||
+        (distance === bestDistance && SOURCE_RANK[anchor.source] > SOURCE_RANK[best.source])
+      ) {
         best = anchor;
         bestDistance = distance;
       }
@@ -78,7 +95,7 @@ export class SampleBank {
     return created;
   }
 
-  /** 预渲染中央音区，保证第一次按键不会因为现场合成而有延迟 */
+  /** 预渲染指定音区，保证第一次按键不会因为现场合成而有延迟 */
   prewarm(factory: (midi: number) => AudioBuffer, pitches: number[] = [57, 69, 81]): void {
     for (const pitch of pitches) {
       const midi = synthAnchorFor(pitch);
