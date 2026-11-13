@@ -55,8 +55,19 @@ const props = defineProps<{
 
 /** 音符提前多久出现在画布顶部（秒）——固定秒数按 BPM 折算成预备拍数 */
 const LEAD_SECONDS = 2;
-/** 下落小长条的像素高度（紧凑长条，底边对齐判定线） */
-const STRIP_HEIGHT = 12;
+/** 下落小长条的像素厚度（细条，底边对齐判定线） */
+const STRIP_HEIGHT = 8;
+/** 命中闪光的持续时长（秒） */
+const FLASH_SECONDS = 0.38;
+
+/** 一次命中闪光：在哪根键的 x 上、什么时候、什么档位 */
+interface HitFlash {
+  pitch: number;
+  born: number;
+  grade: Grade;
+}
+
+const flashes: HitFlash[] = [];
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
@@ -173,6 +184,40 @@ function draw(): void {
   ctx.fillStyle = `rgba(${palette.accent}, 0.95)`;
   ctx.fillRect(0, lineY - 2, width, 2);
   ctx.restore();
+
+  // ---------------------------------------------------------- 命中闪光（弹对时判定线上的反馈）
+  const nowMs = performance.now();
+  for (let i = flashes.length - 1; i >= 0; i -= 1) {
+    const hit = flashes[i];
+    const age = (nowMs - hit.born) / 1000;
+    if (age > FLASH_SECONDS) {
+      flashes.splice(i, 1);
+      continue;
+    }
+    const geo = geometry.get(hit.pitch);
+    if (!geo) continue;
+    const x = (geo.left + geo.width / 2) * unit - scrollLeft;
+    const t = age / FLASH_SECONDS;
+    // Perfect 最亮，Great / Good 递减
+    const strength = hit.grade === 'perfect' ? 1 : hit.grade === 'great' ? 0.72 : 0.5;
+    const alpha = (1 - t) * strength;
+
+    // 判定线上的一小段亮条，向两边收
+    const halfWidth = (geo.width * unit) / 2 * (1 - 0.35 * t);
+    ctx.save();
+    ctx.shadowColor = `rgba(${palette.accent}, ${alpha})`;
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = `rgba(${palette.accent}, ${alpha})`;
+    ctx.fillRect(x - halfWidth, lineY - 3, halfWidth * 2, 3);
+    // 向上散开的光点
+    ctx.beginPath();
+    ctx.arc(x, lineY - 4, 4 + 14 * t, Math.PI, 0);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(${palette.white}, ${alpha * 0.55})`;
+    ctx.fill();
+    ctx.restore();
+  }
+
 }
 
 function frame(): void {
@@ -188,7 +233,14 @@ function startLoop(): void {
 function stopLoop(): void {
   if (rafId) cancelAnimationFrame(rafId);
   rafId = 0;
+  flashes.length = 0; // 暂停 / 停止时清掉未散尽的命中闪光
   draw(); // 补一帧静止画面（暂停 / 停止后的残影清掉）
+}
+
+/** 弹对了在判定线上闪一下（App 判定成功时调用；Miss 不闪） */
+function flash(pitch: number, grade: Grade): void {
+  if (grade === 'miss') return;
+  flashes.push({ pitch, born: performance.now(), grade });
 }
 
 watch(
@@ -217,6 +269,8 @@ onMounted(() => {
   if (canvasRef.value) resizeObserver.observe(canvasRef.value);
   if (props.playing) startLoop();
 });
+
+defineExpose({ flash });
 
 onBeforeUnmount(() => {
   stopLoop();

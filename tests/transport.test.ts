@@ -257,6 +257,27 @@ describe('Transport：rawBeat（琴键高亮用）', () => {
     expect(run.transport.rawBeat).toBeCloseTo(0, 10);
   });
 
+  it('play(leadInOverride)：跟弹预备——锚点推到 2s 后，前 2s 是负拍位', () => {
+    const run = harness({ notes: [note(60, 0), note(62, 2)], leadIn: 0.05 });
+    run.transport.play(2);
+    run.setClock(0);
+    // (0 - 2) / 0.5 = -4 拍：第一条音还差 2s 才到判定线（长条正在下落）
+    expect(run.transport.rawBeat).toBeCloseTo(-4, 10);
+    run.setClock(0.9); // 还没到，不排程不发声
+    run.tick();
+    expect(run.scheduled).toHaveLength(0);
+    run.setClock(1.95); // 进入 100ms 前瞻窗才交出
+    run.tick();
+    expect(run.scheduled.map((n) => n.pitch)).toEqual([60]);
+    expect(run.scheduled[0].when).toBeCloseTo(2, 10);
+    run.setClock(2.95);
+    run.tick();
+    expect(run.scheduled.map((n) => n.pitch)).toEqual([60, 62]); // beat 2 → 2 + 2s + 1s
+    run.setClock(1.5); // 倒回时钟也无所谓，已排的不撤
+    run.tick();
+    expect(run.scheduled).toHaveLength(2);
+  });
+
   it('播放中实时推进，暂停后冻结', () => {
     const run = harness({ notes: [note(60, 0), note(62, 2)], leadIn: 0 });
     run.transport.play();

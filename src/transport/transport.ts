@@ -215,12 +215,20 @@ export class Transport {
     this.callbacks.onTick?.(this.lastSnapshot);
   }
 
-  play(): void {
+  /**
+   * 开始播放。
+   *
+   * @param leadInOverride 覆盖本次起播的留白（秒）。跟弹模式传一个较大的值
+   *   （比如 2s）：锚点推到未来，前几拍是「负拍位」，第一条音要过这么久才到判定线 ——
+   *   下落长条正好从画布顶部落到线，玩家有完整的下落时间来反应。
+   *   留白期间 `rawBeat` 是负数、`snapshot.beat` 钳在 0，漏按清扫不会误判。
+   */
+  play(leadInOverride?: number): void {
     if (this.playingValue || this.notes.length === 0) return;
     // 播到底之后再按播放：从头来
     if (this.pausedBeat >= this.totalBeatsValue) this.pausedBeat = 0;
     this.anchorBeat = this.pausedBeat;
-    this.anchorTime = this.now() + this.leadIn;
+    this.anchorTime = this.now() + (leadInOverride ?? this.leadIn);
     this.cursor = this.firstIndexAtOrAfter(this.anchorBeat);
     this.playingValue = true;
     this.ticker = this.tickerFactory(() => this.tick(), this.tickIntervalMs);

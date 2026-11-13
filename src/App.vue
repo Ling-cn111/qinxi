@@ -88,6 +88,7 @@ const status = ref<EngineStatus>(engine.status);
 const volume = ref(100);
 const recent = ref<string[]>([]);
 const visualizer = ref<InstanceType<typeof NoteVisualizer> | null>(null);
+const followCanvas = ref<InstanceType<typeof FollowCanvas> | null>(null);
 
 // 控制台状态
 const deckTab = ref<DeckTab>('display');
@@ -117,6 +118,12 @@ const baseKeyMap = computed(() => new PianoKeyMap({ custom: customBindings.value
 const currentNotesRef = shallowRef<NoteEvent[]>([]);
 /** 跟弹：当前谱面的 BPM（决定下落速度） */
 const followBpm = ref(96);
+/**
+ * 跟弹起播预备（秒）：锚点推到未来，第一条音要过这么久才到判定线，
+ * 长条正好从画布顶部落到线 —— 给玩家完整的下落时间反应，不做零帧起手。
+ * 必须与 FollowCanvas 的 LEAD_SECONDS 一致（长条提前这么久入场）。
+ */
+const FOLLOW_PREROLL_SECONDS = 2;
 /** 跟弹：音符下标 → 判定等级。判定频率高，走可变对象，不走 Vue 响应式 */
 const judgedMap = new Map<number, Grade>();
 const followStats = reactive({ perfect: 0, great: 0, good: 0, miss: 0 });
@@ -211,7 +218,10 @@ function judgeFollowPress(pitch: number): void {
     judgedMap,
     transport.secondsPerBeat,
   );
-  if (hit.note) judgedMap.set(hit.index, hit.grade);
+  if (hit.note) {
+    judgedMap.set(hit.index, hit.grade);
+    followCanvas.value?.flash(hit.note.pitch, hit.grade);
+  }
   recordJudgment(hit);
 }
 
@@ -252,7 +262,7 @@ function startPlayback(): void {
   followBpm.value = score.bpm;
   resetFollowProgress();
   transport.load(parsed.notes, { bpm: score.bpm });
-  transport.play();
+  transport.play(playMode.value === 'follow' ? FOLLOW_PREROLL_SECONDS : undefined);
   playState.value = 'playing';
   startRenderLoop();
 }
@@ -735,6 +745,7 @@ onBeforeUnmount(() => {
       <!-- 跟弹播放时：下落音符画布替换音符频谱（弹奏反馈）；其余情况显示频谱 -->
       <FollowCanvas
         v-if="playMode === 'follow' && playState !== 'idle'"
+        ref="followCanvas"
         :notes="currentNotesRef"
         :judged="judgedMap"
         :get-beat="() => transport.rawBeat"
