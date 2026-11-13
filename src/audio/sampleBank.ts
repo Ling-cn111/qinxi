@@ -12,11 +12,21 @@ const SOURCE_RANK: Record<AnchorSource, number> = {
 export interface SampleAnchor {
   midi: number;
   buffer: AudioBuffer;
+  /** 峰值归一化后的增益乘数（0.89 / peak），未归一化时视为 1 */
+  gain?: number;
   source: AnchorSource;
+}
+
+/** 现场合成出来的兜底音，带自己的归一化增益 */
+export interface SynthTone {
+  buffer: AudioBuffer;
+  gain: number;
 }
 
 export interface ResolvedSample {
   buffer: AudioBuffer;
+  /** 该音的归一化增益 */
+  gain: number;
   /** 播放速率 = 2^((目标音高 - 锚点音高)/12)，用于移调覆盖没有采样的音高 */
   ratio: number;
   anchorMidi: number;
@@ -78,6 +88,7 @@ export class SampleBank {
     }
     return {
       buffer: best.buffer,
+      gain: best.gain ?? 1,
       ratio: Math.pow(2, (pitch - best.midi) / 12),
       anchorMidi: best.midi,
       source: best.source,
@@ -85,22 +96,24 @@ export class SampleBank {
   }
 
   /** 取最近锚点；库里还没有可用锚点时用 factory 现场合成一份 */
-  resolve(pitch: number, factory: (midi: number) => AudioBuffer): ResolvedSample {
+  resolve(pitch: number, factory: (midi: number) => SynthTone): ResolvedSample {
     const found = this.find(pitch);
     if (found) return found;
     const midi = synthAnchorFor(pitch);
-    this.set({ midi, buffer: factory(midi), source: 'synth' });
+    const tone = factory(midi);
+    this.set({ midi, buffer: tone.buffer, gain: tone.gain, source: 'synth' });
     const created = this.find(pitch);
     if (!created) throw new Error('采样库初始化失败');
     return created;
   }
 
   /** 预渲染指定音区，保证第一次按键不会因为现场合成而有延迟 */
-  prewarm(factory: (midi: number) => AudioBuffer, pitches: number[] = [57, 69, 81]): void {
+  prewarm(factory: (midi: number) => SynthTone, pitches: number[] = [57, 69, 81]): void {
     for (const pitch of pitches) {
       const midi = synthAnchorFor(pitch);
       if (this.anchors.some((a) => a.midi === midi)) continue;
-      this.set({ midi, buffer: factory(midi), source: 'synth' });
+      const tone = factory(midi);
+      this.set({ midi, buffer: tone.buffer, gain: tone.gain, source: 'synth' });
     }
   }
 }

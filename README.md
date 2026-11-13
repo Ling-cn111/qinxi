@@ -2,11 +2,11 @@
 
 在浏览器里弹钢琴、跟着谱子练琴的轻量 Web 应用。当前处于 **MVP 阶段 1：自由弹奏**。
 
-- 88 键钢琴（52 白键 / 36 黑键，黑白宽度比 7:5），纯 CSS 布局
+- 88 键钢琴，**5 八度视口**：白键宽 2.775%（AutoPiano 原值），一屏 36 个白键，横向滚动提供低/中/高三档
 - 电脑键盘 + 鼠标 / 触屏双输入，按下即有视觉反馈
 - 原生 Web Audio API 直接调度 `AudioBufferSourceNode.start(when)`，不经任何第三方音频调度
 - 音色使用 **AutoPiano 原版单音采样**（本地 61 个 mp3，C2–C7 全半音），88 键靠相邻采样移调全覆盖
-- 深色舞台式界面：琴体浮在暗处，白键有厚度与投影、黑键有受光过渡、按下有明显下沉反馈
+- 深色界面，尺寸/配色严格对齐 AutoPiano：黑漆顶盖、`.wkey` / `.bkey` 的渐变色与边框均取自其源码
 
 > 参考项目：[AutoPiano 自由钢琴](https://www.autopiano.cn/)（[Wscats/piano](https://github.com/Wscats/piano)）。
 > 本仓库仅参考其 **CSS 钢琴布局思路** 与 **社区键盘谱的键位映射约定**，代码用 Vue 3 + TypeScript 全部重写，
@@ -51,6 +51,26 @@ docs/screenshots/  界面截图（PR 用）
 
 后续阶段会补上 `src/transport/`（权威时钟与调度）、`src/parser/`（键盘谱解析）、`src/game/`（判定引擎）、`src/data/`（内置谱面）。
 
+## 钢琴布局数值（对齐 AutoPiano）
+
+取自 `WarpPrism/AutoPiano` 的 `src/components/Piano.vue`，本项目原样沿用：
+
+| 元素 | 数值 |
+| --- | --- |
+| `.piano-wrap` | `width: 90%; margin: 20px auto; border-radius: 5px; overflow: hidden` |
+| `.piano-key-wrap` | 背景 `#222`，一屏 36 个白键，高度 280px |
+| `.wkey` | `width: 2.775%`、`height: 100%`、`border: 1px solid #222`、`border-radius: 0 0 5px 5px` |
+| `.wkey` 背景 | `linear-gradient(white 10%, rgb(251,251,251) 92%, rgb(220,220,220) 93%, white 97%)` |
+| `.wkey:active` | `linear-gradient(#eee 10%, #ddd 60%, #bbb 93%, #ccc 97%)` + 上移 1% / 高 99% + 两侧三角阴影 |
+| `.bkey` | 宽 2%（白键的 2/2.775）、高 70%、`linear-gradient(-20deg,#333,#000,#333)`、`border: 1px 2px 7px`、`border-radius: 0 0 2px 2px` |
+| 键床 | 52 白键 × 2.775% = **144.3%** 视口宽，滚动容器提供 5 八度窗口 |
+
+**关键点**：2.775% 是「相对 36 键视口」的宽度。88 键有 52 个白键，如果直接平分视口会变成 1.92%，
+因此键床被放大到 144.3%，由外层横向滚动裁出 5 八度窗口 —— 视觉上的键宽、疏密与原站一致。
+
+**三档视口**（切换只滚动，不重建 DOM）：低音区 C1–C5 / 中音区 C2–C7 / 高音区 C3–C8，
+分别滚动到第 2 / 9 / 16 个白键（单位：白键宽度）。键盘事件始终映射完整 88 键。
+
 ## 键盘映射
 
 AutoPiano 社区键盘谱用「字母 / 数字行 + Shift 组合」描述旋律，本项目的映射表按同样约定实现，
@@ -81,6 +101,12 @@ AutoPiano 社区键盘谱用「字母 / 数字行 + Shift 组合」描述旋律�
 - `src/audio/PianoEngine.ts`：唯一音频出口。所有发声都是 `AudioBufferSourceNode` → `GainNode` → 主音量 → `DynamicsCompressor` → `destination`，
   调度时刻由 `AudioContext.currentTime` 决定，按键路径上没有任何 `await`，不引入额外延迟。
 - 音源优先级：**本地 AutoPiano 采样 → Salamander（加染色）→ 现场合成**，三者共用同一套复音管理与调度。
+- **逐音归一化**：每个采样解码后取峰值，增益 `0.89 / peak`（目标 -1dBFS）。实测同一批采样里
+  C4 峰值 0.536、E4 0.289、G4 0.287（相差 5.7dB），不归一化会出现明显的"有的音响有的音闷"。
+- **包络**：每个 `AudioBufferSourceNode` 串一个 `GainNode`，`setValueAtTime(0)` → 8ms 线性起音 →
+  `setTargetAtTime(0)` 指数衰减，衰减时常数按音区为 2.5s（<C3）/ 1.8s（C3–B4）/ 1.2s（≥C5）。
+- **总线**：所有发声汇入一个 `GainNode`，默认 0.7；活跃 source 超过 12 个时按 `12/active` 等比下压，
+  最低 0.4。总线上再串一级阈值 -1dB 的峰值限制器兜底（实测三音和弦叠加峰 0.784 / -2.11dBFS，未削顶）。
 - 采样来源：AutoPiano（`Wscats/piano`）的 `public/samples/piano/*.mp3`，原样放在本项目 `public/samples/piano/`，
   共 61 个音（C2–C7 全半音）。文件名编号是该仓库自定的（`A2 → a54.mp3`），映射表见 `src/audio/autopianoSamples.ts`。
   原表漏了 A♯2，其 `b54.mp3` 实际存在于目录中，已按同组编号规律补回。
@@ -106,6 +132,8 @@ npm run test
 - `tests/autopianoSamples.test.ts`：采样表完整性（61 音全半音、文件真实存在、无多余/无重复、命名前缀）
 - `tests/nodePool.test.ts`：GainNode 复用、断开连接、上限与并发借用
 - `tests/legacyTone.test.ts`：软削波曲线（端点归一、奇对称、单调、驱动量）
+- `tests/gain.test.ts`：峰值检测、逐音归一化、包络衰减时常数、总线限幅与下压曲线
+- `tests/pianoLayout.test.ts`（扩充）：2.775% 键宽、2% 黑键宽、144.3% 键床、三档视口滚动单位
 
 Canvas 渲染与音频节点创建不做单测，验收方式见 PR 描述中的手动步骤。
 
