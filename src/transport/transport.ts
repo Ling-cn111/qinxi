@@ -180,6 +180,16 @@ export class Transport {
     return this.playingValue ? this.beatAt(this.now()) : this.pausedBeat;
   }
 
+  /**
+   * 绝对音频时刻 → 拍位（不钳制）。播放中才有效，暂停时返回停留点。
+   * 延迟校准的修正入口：判定 / 清扫前先对时刻做修正
+   * （`corrected = now − inputOffset`），再用本方法换算拍位 ——
+   * 与内部 `rawBeat` 同一个公式同一个锚点，保证两边拍位可加减。
+   */
+  beatFromAudioTime(timeSec: number): number {
+    return this.playingValue ? this.beatAt(timeSec) : this.pausedBeat;
+  }
+
   get snapshot(): TransportSnapshot {
     return this.playingValue ? this.snapshotAt(this.beat, 0) : this.lastSnapshot;
   }
@@ -231,7 +241,10 @@ export class Transport {
     this.anchorTime = this.now() + (leadInOverride ?? this.leadIn);
     this.cursor = this.firstIndexAtOrAfter(this.anchorBeat);
     this.playingValue = true;
-    this.ticker = this.tickerFactory(() => this.tick(), this.tickIntervalMs);
+    // 唤醒器实例跨播放周期复用：每次 play 都 new 一个 Worker 会逐轮泄漏
+    // （stop() 只是让它闲下来，不 terminate），切几次歌就堆几个空闲线程 + Blob URL。
+    // Worker 协议本身就支持反复 start/stop，这里造一次用到 dispose 为止。
+    if (!this.ticker) this.ticker = this.tickerFactory(() => this.tick(), this.tickIntervalMs);
     this.ticker.start();
     // 立刻排一次，别干等 25ms
     this.tick();
@@ -241,8 +254,8 @@ export class Transport {
     if (!this.playingValue) return;
     this.pausedBeat = this.clampBeat(this.beatAt(this.now()));
     this.playingValue = false;
+    // 只停不清：实例留给下一次 play 复用（见 play 内注释）
     this.ticker?.stop();
-    this.ticker = null;
     this.callbacks.onCancelAll?.();
     this.lastSnapshot = this.snapshotAt(this.pausedBeat, 0);
     this.callbacks.onTick?.(this.lastSnapshot);
@@ -252,7 +265,6 @@ export class Transport {
     const wasPlaying = this.playingValue;
     this.playingValue = false;
     this.ticker?.stop();
-    this.ticker = null;
     this.cursor = 0;
     this.pausedBeat = 0;
     if (wasPlaying) this.callbacks.onCancelAll?.();
@@ -324,8 +336,8 @@ export class Transport {
 
   private finish(): void {
     this.playingValue = false;
+    // 只停不清：实例留给下一次 play 复用（见 play 内注释）
     this.ticker?.stop();
-    this.ticker = null;
     this.pausedBeat = this.totalBeatsValue;
     this.lastSnapshot = this.snapshotAt(this.totalBeatsValue, 0);
     this.callbacks.onTick?.(this.lastSnapshot);

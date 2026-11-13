@@ -6,6 +6,7 @@ import NoteVisualizer from '@/components/NoteVisualizer.vue';
 import ThemeMenu from '@/components/ThemeMenu.vue';
 import UiToggle from '@/components/UiToggle.vue';
 import FollowCanvas from '@/components/FollowCanvas.vue';
+import CalibrationPanel from '@/components/CalibrationPanel.vue';
 import { PianoEngine, type EngineStatus } from '@/audio/PianoEngine';
 import {
   BASE_START_MIDI,
@@ -33,6 +34,14 @@ import { BUILT_IN_SCORES, DEFAULT_SCORE_ID, findScore, loadScore } from '@/data/
 import { activeNotesAt, samePitchSet } from '@/transport/activeNotes';
 import { Transport, type TransportSnapshot } from '@/transport/transport';
 import { collectMissed, judgeHit, type Grade, type Judgment } from '@/game/judge';
+import {
+  CALIBRATION_TAPS_MAX,
+  CALIBRATION_TAPS_REQUIRED,
+  computeOffset,
+  loadInputOffsetMs,
+  saveInputOffsetMs,
+  type CalibrationResult,
+} from '@/game/calibration';
 import type { NoteEvent } from '@/types';
 import type { NoteLabelMode } from '@/keyboard/labels';
 import { DEFAULT_VIEWPORT_ID, PIANO_VIEWPORTS, type PianoViewport } from '@/keyboard/layout';
@@ -100,6 +109,115 @@ const diagramMode = ref<'char' | 'note'>('note');
 // 自定义键位
 const editMode = ref(false);
 
+// ---------------------------------------------------------------- 延迟校准
+const calibrationOpen = ref(false);
+const calibrationPhase = ref<'idle' | 'running' | 'settled'>('idle');
+/** 已收录的每次按键偏差（ms，带符号：正 = 按晚了） */
+const calibrationTaps = ref<number[]>([]);
+const calibrationResult = ref<CalibrationResult | null>(null);
+/** 输入延迟修正（ms）：判定时刻 = AudioContext.currentTime − inputOffset */
+const inputOffsetMs = ref(loadInputOffsetMs(window.localStorage));
+/** 校准用合成谱：120 BPM，一拍一个长条，共 16 拍（8 次即结算，后面是容错余量） */
+const CALIB_BEATS = 16;
+const calibNotes = shallowRef<NoteEvent[]>(
+  Array.from({ length: CALIB_BEATS }, (_, index) => ({
+    id: `calib${index}`,
+    pitch: 96,
+    startBeat: index,
+    durationBeats: 0.5,
+  })),
+);
+
+watch(inputOffsetMs, (value) => {
+  saveInputOffsetMs(window.localStorage, value);
+});
+
+/** 校准节拍器：onNote 发一声「嗒」（C7 采样短音），其余与主 Transport 同一套时钟机制 */
+const calibrationTransport = new Transport({
+  now: () => engine.now(),
+  bpm: 120,
+  callbacks: {
+    onNote: (item) => engine.playNote(item.pitch, item.when, 0.09, 34),
+    onEnd: () => finishCalibration(false),
+  },
+});
+
+function openCalibration(): void {
+  calibrationOpen.value = true;
+  calibrationPhase.value = 'idle';
+  calibrationResult.value = null;
+}
+
+function closeCalibration(): void {
+  if (calibrationPhase.value === 'running') calibrationTransport.stop();
+  calibrationOpen.value = false;
+}
+
+function startCalibration(): void {
+  void engine.start();
+  calibrationTaps.value = [];
+  calibrationResult.value = null;
+  calibrationPhase.value = 'running';
+  calibrationTransport.load(calibNotes.value, { bpm: 120 });
+  // 2s 预备：第一根长条从画布顶部落到线，和跟弹一个手感
+  calibrationTransport.play(2);
+}
+
+/**
+ * 收一次按键偏差。取「离当前拍位最近的整数拍」为标准点，
+ * 同一拍多次按键只算第一次（防抖）。预备期（负拍位）不收。
+ */
+function recordCalibrationTap(): void {
+  if (calibrationPhase.value !== 'running' || !calibrationTransport.playing) return;
+  const beatNow = calibrationTransport.rawBeat;
+  if (beatNow < 0) return;
+  const beatIndex = Math.round(beatNow);
+  if (beatIndex < 0 || beatIndex > CALIB_BEATS - 1) return;
+  // 同一拍多次按键只算第一次
+  if (tapBeats.has(beatIndex)) return;
+  tapBeats.add(beatIndex);
+  const deltaMs = (beatNow - beatIndex) * calibrationTransport.secondsPerBeat * 1000;
+  calibrationTaps.value = [...calibrationTaps.value, deltaMs];
+  if (calibrationTaps.value.length >= Math.min(CALIBRATION_TAPS_REQUIRED, CALIBRATION_TAPS_MAX)) {
+    finishCalibration(true);
+  }
+}
+
+/** 同一拍去重用的记录 */
+const tapBeats = new Set<number>();
+
+/** 结算：8 次满 → 统计；节拍播完仍不足 → 失败 */
+function finishCalibration(complete: boolean): void {
+  calibrationTransport.stop();
+  tapBeats.clear();
+  if (complete && calibrationTaps.value.length >= CALIBRATION_TAPS_REQUIRED) {
+    const result = computeOffset(calibrationTaps.value);
+    calibrationResult.value = result;
+    if (result.stable) inputOffsetMs.value = Math.round(result.offsetMs);
+  } else {
+    calibrationResult.value = {
+      offsetMs: 0,
+      stddevMs: Number.POSITIVE_INFINITY,
+      sampleCount: calibrationTaps.value.length,
+      stable: false,
+    };
+  }
+  calibrationPhase.value = 'settled';
+}
+
+/** 手动微调：±5ms 一档，随改随存 */
+function adjustOffset(deltaMs: number): void {
+  inputOffsetMs.value = Math.max(-500, Math.min(500, inputOffsetMs.value + deltaMs));
+}
+
+/** 恢复默认（0） */
+function resetOffset(): void {
+  inputOffsetMs.value = 0;
+}
+
+/** 校准画布不显示命中反馈，用同一个空 Map 占位 */
+const emptyJudged = new Map<number, Grade>();
+
 // ---------------------------------------------------------------- 自动播放 / 跟弹
 /** 选中的内置曲谱 */
 const scoreId = ref<string>(DEFAULT_SCORE_ID);
@@ -132,6 +250,15 @@ const lastGrade = ref<Grade | null>(null);
 const followSummary = ref('');
 /** 跟弹进行中（判定与清扫挂在这个条件下） */
 const followActive = computed(() => playMode.value === 'follow' && playState.value === 'playing');
+
+/**
+ * 判定 / 漏按清扫共用的拍位：先按输入延迟修正时刻，再换算拍位。
+ * `rawBeat` = beatFromAudioTime(now)，这里只是把 now 换成 now − offset。
+ */
+function correctedBeat(): number {
+  if (!transport.playing) return transport.rawBeat;
+  return transport.beatFromAudioTime(engine.now() - inputOffsetMs.value / 1000);
+}
 let currentNotes: NoteEvent[] = [];
 let renderRafId = 0;
 
@@ -228,7 +355,7 @@ function judgeFollowPress(pitch: number): void {
   // hitBeat 从 AudioContext.currentTime 换算（transport.rawBeat 内部就是 beatAtTime，
   // 与自动播放的排程锚点同源同刻）
   const hit = judgeHit(
-    { pitch, hitBeat: transport.rawBeat },
+    { pitch, hitBeat: correctedBeat() },
     currentNotesRef.value,
     judgedMap,
     transport.secondsPerBeat,
@@ -250,7 +377,7 @@ function recordMissed(index: number): void {
 
 /** 跟弹渲染循环：每帧清扫一次漏按（判定本身在按键事件里做，这里只兜底） */
 function renderFollowLoop(): void {
-  for (const index of collectMissed(currentNotesRef.value, judgedMap, transport.rawBeat, transport.secondsPerBeat)) {
+  for (const index of collectMissed(currentNotesRef.value, judgedMap, correctedBeat(), transport.secondsPerBeat)) {
     recordMissed(index);
   }
   renderRafId = followActive.value ? requestAnimationFrame(renderFollowLoop) : 0;
@@ -574,6 +701,13 @@ function isTypingTarget(target: EventTarget | null): boolean {
 function onKeyDown(event: KeyboardEvent): void {
   if (event.repeat || isTypingTarget(event.target)) return;
 
+  // 延迟校准：空格 = 记一次按键，其他键照常
+  if (calibrationOpen.value && calibrationPhase.value === 'running' && event.code === 'Space') {
+    event.preventDefault();
+    recordCalibrationTap();
+    return;
+  }
+
   // 自定义键位：按键用于「绑定」而不是「演奏」
   if (editMode.value) {
     if (event.code === 'Escape') {
@@ -651,6 +785,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unsubscribeStatus?.();
   transport.dispose();
+  calibrationTransport.dispose();
   stopRenderLoop();
   window.clearTimeout(lastActionTimer);
   window.removeEventListener('keydown', onKeyDown);
@@ -758,19 +893,36 @@ onBeforeUnmount(() => {
             <span v-else-if="followSummary" class="player__judge player__judge--summary" role="status">{{ followSummary }}</span>
           </div>
           <button type="button" class="text-btn" @click="releaseAll">全部松开</button>
+          <button type="button" class="text-btn" @click="openCalibration">延迟校准</button>
         </div>
       </div>
 
-      <!-- 跟弹播放时：下落音符画布替换音符频谱（弹奏反馈）；其余情况显示频谱 -->
-      <FollowCanvas
-        v-if="playMode === 'follow' && playState !== 'idle'"
-        ref="followCanvas"
-        :notes="currentNotesRef"
-        :judged="judgedMap"
-        :get-beat="() => transport.rawBeat"
-        :playing="playState === 'playing'"
-        :bpm="followBpm"
-      />
+      <!-- 跟弹播放时：下落音符画布替换音符频谱（弹奏反馈）；校准时显示校准节拍；其余情况显示频谱 -->
+      <div v-if="calibrationOpen || (playMode === 'follow' && playState !== 'idle')" class="viz-slot">
+        <FollowCanvas
+          ref="followCanvas"
+          class="viz-slot__canvas"
+          :notes="calibrationOpen ? calibNotes : currentNotesRef"
+          :judged="calibrationOpen ? emptyJudged : judgedMap"
+          :get-beat="calibrationOpen ? () => calibrationTransport.rawBeat : () => transport.rawBeat"
+          :playing="calibrationOpen ? calibrationTransport.playing : playState === 'playing'"
+          :bpm="calibrationOpen ? 120 : followBpm"
+        />
+        <CalibrationPanel
+          v-if="calibrationOpen"
+          class="viz-slot__panel"
+          :phase="calibrationPhase"
+          :taps="calibrationTaps"
+          :required="CALIBRATION_TAPS_REQUIRED"
+          :result="calibrationResult"
+          :offset-ms="inputOffsetMs"
+          @start="startCalibration"
+          @close="closeCalibration"
+          @adjust="adjustOffset"
+          @reset="resetOffset"
+          @tap="recordCalibrationTap"
+        />
+      </div>
       <NoteVisualizer v-else ref="visualizer" />
 
       <PianoKeyboard
@@ -1038,6 +1190,31 @@ onBeforeUnmount(() => {
 
 .text-btn:disabled:hover {
   color: rgba(var(--qin-w-rgb), 0.42);
+}
+
+/* -------------------------------------------- 频谱带插槽（跟弹 / 校准共用） */
+.viz-slot {
+  position: relative;
+  width: 90%;
+  height: 96px;
+  margin: 12px auto -12px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.34));
+}
+
+/* FollowCanvas 根元素在此容器内铺满（类会透传到组件根） */
+.viz-slot__canvas {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 820px) {
+  .viz-slot {
+    width: 92%;
+    height: 84px;
+  }
 }
 
 /* ------------------------------------------------------------------ 播放控制条 */
