@@ -155,3 +155,47 @@ describe('modifierFromEvent', () => {
     expect(modifierFromEvent(base)).toBe('none');
   });
 });
+
+describe('键位跟随音区（整体平移八度）', () => {
+  const low = new PianoKeyMap({ startMidi: 24 }); // 低音区 C1–C6
+  const high = new PianoKeyMap({ startMidi: 48 }); // 高音区 C3–C8
+
+  it('低音区把整组键位挪到 C1 起', () => {
+    expect(low.lookup('KeyZ', 'none')?.pitch).toBe(24); // C1
+    expect(low.lookup('Equal', 'none')?.pitch).toBe(84); // C6
+    expect(low.pitches).toHaveLength(36);
+    expect(Math.min(...low.pitches)).toBe(24);
+  });
+
+  it('高音区把整组键位挪到 C3 起，最高到 C8', () => {
+    expect(high.lookup('KeyZ', 'none')?.pitch).toBe(48); // C3
+    expect(high.lookup('Equal', 'none')?.pitch).toBe(108); // C8
+    expect(high.pitches).toHaveLength(36);
+  });
+
+  it('每档平移后仍然只有白键、没有修饰键', () => {
+    for (const map of [low, high]) {
+      expect(map.bindings.every((item) => item.modifier === 'none')).toBe(true);
+      expect(map.bindings.every((item) => [0, 2, 4, 5, 7, 9, 11].includes(item.pitch % 12))).toBe(
+        true,
+      );
+    }
+  });
+
+  it('自定义绑定是绝对音高，不跟着音区走', () => {
+    const map = new PianoKeyMap({
+      startMidi: 24,
+      custom: [{ code: 'KeyQ', modifier: 'none', pitch: 60 }],
+    });
+    // Q 被用户钉死在 C4，而不是默认的 C2（平移后 C1）
+    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(60);
+    expect(map.lookup('KeyZ', 'none')?.pitch).toBe(24);
+  });
+
+  it('平移后音名标签跟着变，键位字符不变', () => {
+    expect(low.labelFor(24)).toBe('Z');
+    expect(high.labelFor(48)).toBe('Z');
+    expect(low.findByChar('z')?.pitch).toBe(24);
+    expect(high.findByChar('z')?.pitch).toBe(48);
+  });
+});
