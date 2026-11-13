@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch 
 import PianoKeyboard from '@/components/PianoKeyboard.vue';
 import ControlDeck from '@/components/ControlDeck.vue';
 import NoteVisualizer from '@/components/NoteVisualizer.vue';
+import ThemeMenu from '@/components/ThemeMenu.vue';
 import UiToggle from '@/components/UiToggle.vue';
 import { PianoEngine, type EngineStatus } from '@/audio/PianoEngine';
 import {
@@ -28,7 +29,6 @@ import {
 } from '@/keyboard/keymapSchemes';
 import { midiToName } from '@/audio/note';
 import type { NoteLabelMode } from '@/keyboard/labels';
-import { DEFAULT_INSTRUMENT_ID } from '@/data/instruments';
 import { DEFAULT_VIEWPORT_ID, PIANO_VIEWPORTS, type PianoViewport } from '@/keyboard/layout';
 import type { DeckTab } from '@/types';
 
@@ -88,7 +88,6 @@ const deckTab = ref<DeckTab>('display');
 const showHints = ref(true);
 const showNoteNames = ref(true);
 const showSolfege = ref(false);
-const instrument = ref(DEFAULT_INSTRUMENT_ID);
 const diagramMode = ref<'char' | 'note'>('note');
 
 // 自定义键位
@@ -423,6 +422,9 @@ onBeforeUnmount(() => {
           </svg>
           <input v-model.number="volume" type="range" min="0" max="100" step="1" aria-label="主音量" />
         </label>
+
+        <!-- 最右侧：外观主题下拉菜单（只换背景与外壳，琴体不变） -->
+        <ThemeMenu />
       </div>
     </header>
 
@@ -474,7 +476,6 @@ onBeforeUnmount(() => {
         v-model:show-hints="showHints"
         v-model:note-names="showNoteNames"
         v-model:solfege="showSolfege"
-        v-model:instrument="instrument"
         v-model:volume="volume"
         v-model:diagram-mode="diagramMode"
         v-model:edit-mode="editMode"
@@ -517,7 +518,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 18px;
   padding: 14px 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: 1px solid rgba(var(--qin-w-rgb), 0.07);
 }
 
 .brand {
@@ -529,14 +530,14 @@ onBeforeUnmount(() => {
 .brand__name {
   font-size: 14px;
   letter-spacing: 0.12em;
-  color: #e6e2da;
+  color: rgb(var(--qin-ink-rgb));
 }
 
 .brand__latin {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 9.5px;
   letter-spacing: 0.3em;
-  color: rgba(255, 255, 255, 0.26);
+  color: rgba(var(--qin-w-rgb), 0.26);
 }
 
 .topbar__right {
@@ -549,14 +550,14 @@ onBeforeUnmount(() => {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 10.5px;
   letter-spacing: 0.06em;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(var(--qin-w-rgb), 0.42);
 }
 
 .volume {
   display: flex;
   align-items: center;
   gap: 9px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(var(--qin-w-rgb), 0.45);
 }
 
 .volume__icon {
@@ -575,7 +576,7 @@ onBeforeUnmount(() => {
 
 .volume input[type='range']::-webkit-slider-runnable-track {
   height: 1px;
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(var(--qin-w-rgb), 0.3);
 }
 
 .volume input[type='range']::-webkit-slider-thumb {
@@ -584,12 +585,12 @@ onBeforeUnmount(() => {
   height: 9px;
   margin-top: -4px;
   border-radius: 50%;
-  background: #cfa46a;
+  background: var(--qin-accent);
 }
 
 .volume input[type='range']::-moz-range-track {
   height: 1px;
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(var(--qin-w-rgb), 0.3);
 }
 
 .volume input[type='range']::-moz-range-thumb {
@@ -597,7 +598,7 @@ onBeforeUnmount(() => {
   height: 9px;
   border: 0;
   border-radius: 50%;
-  background: #cfa46a;
+  background: var(--qin-accent);
 }
 
 /* ------------------------------------------------------------------ 舞台 */
@@ -617,8 +618,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(var(--qin-w-rgb), 0.08);
+  border-bottom: 1px solid rgba(var(--qin-w-rgb), 0.08);
 }
 
 .ranges {
@@ -636,19 +637,19 @@ onBeforeUnmount(() => {
   align-items: center;
   margin-left: 14px;
   padding-left: 18px;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid rgba(var(--qin-w-rgb), 0.08);
 }
 
 .follow :deep(.switch) {
   gap: 8px;
   font-size: 12px;
   letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.48);
+  color: rgba(var(--qin-w-rgb), 0.48);
   transition: color 120ms ease;
 }
 
 .follow :deep(.switch.is-on) {
-  color: #e5c79a;
+  color: var(--qin-accent-strong);
 }
 
 .follow :deep(.switch__track) {
@@ -670,7 +671,7 @@ onBeforeUnmount(() => {
   border: 0;
   border-bottom: 1px solid transparent;
   background: transparent;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(var(--qin-w-rgb), 0.42);
   font-family: inherit;
   font-size: 12px;
   letter-spacing: 0.04em;
@@ -679,19 +680,19 @@ onBeforeUnmount(() => {
 }
 
 .range:hover {
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(var(--qin-w-rgb), 0.72);
 }
 
 .range.is-active {
-  color: #fff;
-  border-bottom-color: #cfa46a;
+  color: rgb(var(--qin-ink-rgb));
+  border-bottom-color: var(--qin-accent);
 }
 
 .range span {
   margin-left: 6px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 9.5px;
-  color: rgba(255, 255, 255, 0.26);
+  color: rgba(var(--qin-w-rgb), 0.26);
 }
 
 .tools {
@@ -704,7 +705,7 @@ onBeforeUnmount(() => {
   padding: 0;
   border: 0;
   background: transparent;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(var(--qin-w-rgb), 0.42);
   font-family: inherit;
   font-size: 12px;
   letter-spacing: 0.04em;
@@ -713,7 +714,7 @@ onBeforeUnmount(() => {
 }
 
 .text-btn:hover {
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(var(--qin-w-rgb), 0.8);
 }
 
 /* 控制台下方的纯文本行 */
@@ -726,18 +727,18 @@ onBeforeUnmount(() => {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 10.5px;
   letter-spacing: 0.05em;
-  color: rgba(255, 255, 255, 0.28);
+  color: rgba(var(--qin-w-rgb), 0.28);
 }
 
 .foot__item b {
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(var(--qin-w-rgb), 0.6);
   letter-spacing: 0.1em;
 }
 
 .foot__item--state {
   margin-left: auto;
-  color: rgba(255, 255, 255, 0.22);
+  color: rgba(var(--qin-w-rgb), 0.22);
 }
 
 @media (max-width: 820px) {

@@ -9,7 +9,8 @@
 - 音色使用 **AutoPiano 原版单音采样**（本地 61 个 mp3，C2–C7 全半音），88 键靠相邻采样移调全覆盖
 - 深色界面，尺寸/配色严格对齐 AutoPiano：黑漆顶盖、`.wkey` / `.bkey` 的渐变色与边框均取自其源码
 - 钢琴上方是**音符频谱**：按下即跳出柱子（含泛音），松手按指数衰减
-- 钢琴下方是**三页签控制台**：显示（键面标注）、声音（乐器目录 + 音量）、键位（C 大调布局 + 自定义 / 空置 + 映射图）
+- 钢琴下方是**三页签控制台**：显示（键面标注）、声音（音量）、键位（C 大调布局 + 自定义 / 空置 + 映射图）
+- 三套**外观主题**（舞台 / 赛博 / 中国红），右上角下拉切换并记住选择；只换背景与外壳，琴体不变
 
 > 参考项目：[AutoPiano 自由钢琴](https://www.autopiano.cn/)（[Wscats/piano](https://github.com/Wscats/piano)）。
 > 本仓库仅参考其 **CSS 钢琴布局思路** 与 **社区键盘谱的键位映射约定**，代码用 Vue 3 + TypeScript 全部重写，
@@ -57,8 +58,8 @@ public/samples/piano/   AutoPiano 原版单音采样（61 个 mp3，C2–C7）
 src/
   audio/      采样表、采样库、节点池、降级染色、钢琴引擎、音高工具
   keyboard/   88 键几何布局、键盘映射表、键面标注（音名 / 唱名）
-  components/ 钢琴键盘、音符频谱、控制台（页签 / 显示 / 声音 / 键位）、键盘映射图、开关
-  data/       音色目录（GM 音色表 + 采样接入状态）
+  components/ 钢琴键盘、音符频谱、控制台（页签 / 显示 / 声音 / 键位）、键盘映射图、开关、主题菜单
+  theme/      外观主题（token 表、应用与持久化）
   types/      共享类型（NoteEvent / KeyBinding / DeckTab）
 tests/        Vitest 单元测试
 docs/screenshots/  界面截图（PR 用）
@@ -101,10 +102,9 @@ docs/screenshots/  界面截图（PR 用）
 
 音名与唱名共用键面下方同一行，开启其一时自动关闭另一个（`PanelDisplay.vue` 里的两个 `watch`）。
 
-**声音** —— 乐器目录 + 音量。目录是给多音色预留的骨架：29 个条目按 GM 音色表排布，
-只有「高音立式钢琴」（AutoPiano 采样）可用，其余 28 张卡片 `disabled` 并压暗。
-接入新采样只需修改 `src/data/instruments.ts` 里对应条目的 `available`，面板结构不用动。
-音量与顶栏滑块共用同一个 `volume`，双向同步。
+**声音** —— 只有主音量。原先按 GM 音色表摆了 28 张音色卡片做「多音色预留」，但它们全都点不动，
+占着一整页却没有功能，已整块删除（连 `src/data/instruments.ts` 一起）。当前音源固定是 AutoPiano 采样，
+真要接多音色时再按当时的采样重新设计这一页。音量与顶栏滑块共用同一个 `volume`，双向同步。
 
 **键位** —— 方案标签（C大调 + 保存过的方案）、保存 / 自定义 / 空置、以及**电脑键盘映射图**：
 5 排键帽按 15 个单位宽度排版，右侧挂一块小键盘；有映射的键按八度着色显示音名
@@ -117,6 +117,35 @@ docs/screenshots/  界面截图（PR 用）
 3. 按下想绑定的物理键，绑定立即生效；`Backspace` 恢复默认，`Delete` 把该音**空置**（不绑任何键）。
 
 绑定与空置的语义见下一节。
+
+## 外观主题（右上角下拉）
+
+顶栏最右侧的下拉菜单切换外观，选择存在 `localStorage: qinxi:theme:v1`，刷新后保持。
+
+| 主题 | 底色 | 强调色 | 背景纹理 |
+| --- | --- | --- | --- |
+| 舞台 `stage` | `#1a1a1a` | 暖木 `#cfa46a` | 顶部一束暖光（默认，与 AutoPiano 原站一致） |
+| 赛博 `cyber` | `#06070d` | 霓虹青 `#38e8ff` | 46px 网格 + 3px 扫描线 + 青/品红/紫三处光斑 |
+| 中国红 `china` | `#220c0a` | 红 `#e0402f` + 金 `#ffc65c` | 45° 金线窗棂 + 宣纸纤维 + 顶部红晕与底部灯影 |
+
+**只换壳，不换琴**：`PianoKeyboard.vue` 里的顶盖黑漆、黑白琴键渐变、键床 `#222` 全是硬编码的 AutoPiano 原值，
+不吃主题变量；主题只管页面底色、顶栏、控制栏、控制台面板、面板内控件、以及音符柱的三段渐变。
+
+实现上是一层 CSS 变量（`--qin-*`）：
+
+- `src/theme/themes.ts`：`ThemeTokens` 用**具名接口**而不是 `Record<string, string>`，
+  少写一个字段 TS 就报错；`THEME_VARS` 负责 token → CSS 变量的映射；`themeVars()` 产出可直接 `setProperty` 的表。
+- `src/theme/useTheme.ts`：`themeId` 是模块级单例（菜单改它、音符画布 `watch` 它），
+  `applyTheme()` 把变量写到 `<html>` 的行内样式并打上 `data-theme`。
+- `src/main.ts` 在 `mount()` 之前先 `applyTheme(loadThemeId())`，否则存了赛博的人刷新会先闪一下暖木底色。
+- `style.css` 的 `:root` 保留一份 `stage` 的默认值当兜底，**必须与 `themes.ts` 同步** ——
+  `tests/themes.test.ts` 会直接解析 `style.css` 比对，写岔了测试会红。
+
+加一套新主题：往 `THEMES` 里加一个对象（字段一个都不能少），再同步 `style.css` 的 `:root`，不用动任何组件。
+
+| 舞台 | 赛博 | 中国红 |
+| --- | --- | --- |
+| ![舞台](docs/screenshots/theme-stage.png) | ![赛博](docs/screenshots/theme-cyber.png) | ![中国红](docs/screenshots/theme-china.png) |
 
 ## 音符频谱（钢琴上方）
 
@@ -248,7 +277,7 @@ npm run test
 - `tests/legacyTone.test.ts`：软削波曲线（端点归一、奇对称、单调、驱动量）
 - `tests/gain.test.ts`：峰值检测、逐音归一化、包络衰减时常数、总线限幅与下压曲线
 - `tests/labels.test.ts`：唱名映射（含黑键升号、跨八度）、三档音名模式、黑键提示拆行
-- `tests/instruments.test.ts`：音色目录（id 唯一、默认音色可用、GM 编号合法且不重复）
+- `tests/themes.test.ts`：外观主题（id 唯一、token 填满且与 CSS 变量一一对应、`style.css` 默认值与 stage 一致、应用 / 未知 id 回落 / 持久化）
 - `tests/keyMapCustom.test.ts`：自定义绑定与空置（覆盖默认键位、绑黑键、空置压住默认、绑定优先于空置、非法条目过滤）
 - `tests/customKeymap.test.ts`：本地持久化（缺失降级、读回一致、损坏 JSON 兜底、条目校验）
 - `tests/keymapSchemes.test.ts`：方案存储（缺失 / 隐私模式降级、坏 JSON、非法条目与重名 id 过滤、签名与顺序无关）

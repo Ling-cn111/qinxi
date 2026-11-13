@@ -320,7 +320,7 @@ onBeforeUnmount(() => {
 .scheme {
   display: inline-flex;
   align-items: stretch;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(var(--qin-w-rgb), 0.12);
   border-radius: 2px;
   overflow: hidden;
   transition:
@@ -329,8 +329,8 @@ onBeforeUnmount(() => {
 }
 
 .scheme.is-active {
-  border-color: rgba(207, 164, 106, 0.6);
-  background: #241b12;
+  border-color: rgba(var(--qin-accent-rgb), 0.6);
+  background: var(--qin-surface-active);
 }
 
 .scheme__name {
@@ -338,7 +338,7 @@ onBeforeUnmount(() => {
   padding: 0 10px;
   border: 0;
   background: transparent;
-  color: rgba(231, 227, 220, 0.6);
+  color: rgba(var(--qin-ink-rgb), 0.6);
   font-family: inherit;
   font-size: 12px;
   letter-spacing: 0.04em;
@@ -348,19 +348,19 @@ onBeforeUnmount(() => {
 }
 
 .scheme__name:hover {
-  color: #e7e3dc;
+  color: rgb(var(--qin-ink-rgb));
 }
 
 .scheme.is-active .scheme__name {
-  color: #e5c79a;
+  color: var(--qin-accent-strong);
 }
 
 .scheme__remove {
   width: 20px;
   border: 0;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid rgba(var(--qin-w-rgb), 0.08);
   background: transparent;
-  color: rgba(231, 227, 220, 0.32);
+  color: rgba(var(--qin-ink-rgb), 0.32);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
@@ -376,7 +376,7 @@ onBeforeUnmount(() => {
 }
 
 .scheme__remove:hover {
-  color: #e8b4a2;
+  color: var(--qin-danger-strong);
 }
 
 /* 「内容没变化」的提示：不打开起名框，就在按钮下方说一句 */
@@ -385,7 +385,7 @@ onBeforeUnmount(() => {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11.5px;
   letter-spacing: 0.03em;
-  color: #d9a97c;
+  color: var(--qin-accent-strong);
 }
 
 /* 保存方案：就地起名，不用浏览器弹窗 */
@@ -396,18 +396,18 @@ onBeforeUnmount(() => {
   gap: 8px;
   margin-top: 14px;
   padding: 10px 12px;
-  border: 1px solid rgba(207, 164, 106, 0.3);
-  background: rgba(207, 164, 106, 0.05);
+  border: 1px solid rgba(var(--qin-accent-rgb), 0.3);
+  background: rgba(var(--qin-accent-rgb), 0.05);
 }
 
 .save-form__input {
   width: 200px;
   height: 28px;
   padding: 0 9px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(var(--qin-w-rgb), 0.14);
   border-radius: 2px;
-  background: #0f0f0f;
-  color: #e7e3dc;
+  background: var(--qin-bg-deep);
+  color: rgb(var(--qin-ink-rgb));
   font-family: inherit;
   font-size: 12.5px;
   letter-spacing: 0.03em;
@@ -415,18 +415,18 @@ onBeforeUnmount(() => {
 
 .save-form__input:focus {
   outline: none;
-  border-color: rgba(207, 164, 106, 0.65);
+  border-color: rgba(var(--qin-accent-rgb), 0.65);
 }
 
 .save-form__input::placeholder {
-  color: rgba(231, 227, 220, 0.26);
+  color: rgba(var(--qin-ink-rgb), 0.26);
 }
 
 .save-form__tip {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11px;
   letter-spacing: 0.03em;
-  color: rgba(232, 217, 194, 0.42);
+  color: rgba(var(--qin-ink-rgb), 0.42);
 }
 
 .status {
@@ -434,16 +434,16 @@ onBeforeUnmount(() => {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11px;
   letter-spacing: 0.04em;
-  color: rgba(231, 227, 220, 0.3);
+  color: rgba(var(--qin-ink-rgb), 0.3);
 }
 
 .ghost {
   min-height: 30px;
   padding: 0 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(var(--qin-w-rgb), 0.12);
   border-radius: 2px;
   background: transparent;
-  color: rgba(231, 227, 220, 0.66);
+  color: rgba(var(--qin-ink-rgb), 0.66);
   font-family: inherit;
   font-size: 12px;
   letter-spacing: 0.02em;
@@ -455,25 +455,25 @@ onBeforeUnmount(() => {
 }
 
 .ghost:hover {
-  border-color: rgba(207, 164, 106, 0.45);
-  color: #e7e3dc;
+  border-color: rgba(var(--qin-accent-rgb), 0.45);
+  color: rgb(var(--qin-ink-rgb));
 }
 
 .ghost.is-active {
-  border-color: rgba(207, 164, 106, 0.65);
-  background: #241b12;
-  color: #e5c79a;
+  border-color: rgba(var(--qin-accent-rgb), 0.65);
+  background: var(--qin-surface-active);
+  color: var(--qin-accent-strong);
 }
 
 .ghost--danger:hover {
-  border-color: rgba(207, 120, 90, 0.55);
-  color: #e8b4a2;
+  border-color: rgba(var(--qin-danger-rgb), 0.55);
+  color: var(--qin-danger-strong);
 }
 
 .ghost--danger.is-confirming {
-  border-color: rgba(207, 120, 90, 0.75);
-  color: #e8b4a2;
-  background: rgba(120, 50, 30, 0.22);
+  border-color: rgba(var(--qin-danger-rgb), 0.75);
+  color: var(--qin-danger-strong);
+  background: rgba(var(--qin-danger-rgb), 0.14);
 }
 
 .ghost--small {
@@ -488,8 +488,8 @@ onBeforeUnmount(() => {
 }
 
 .ghost:disabled:hover {
-  border-color: rgba(255, 255, 255, 0.12);
-  color: rgba(231, 227, 220, 0.66);
+  border-color: rgba(var(--qin-w-rgb), 0.12);
+  color: rgba(var(--qin-ink-rgb), 0.66);
 }
 
 /* 编辑态提示条 */
@@ -499,10 +499,10 @@ onBeforeUnmount(() => {
   gap: 12px;
   margin-top: 14px;
   padding: 10px 14px;
-  border: 1px solid rgba(207, 164, 106, 0.4);
-  background: rgba(207, 164, 106, 0.08);
+  border: 1px solid rgba(var(--qin-accent-rgb), 0.4);
+  background: rgba(var(--qin-accent-rgb), 0.08);
   font-size: 12.5px;
-  color: #e8d9c2;
+  color: rgb(var(--qin-ink-rgb));
 }
 
 .editor__dot {
@@ -510,8 +510,8 @@ onBeforeUnmount(() => {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #cfa46a;
-  box-shadow: 0 0 0 3px rgba(207, 164, 106, 0.18);
+  background: var(--qin-accent);
+  box-shadow: 0 0 0 3px rgba(var(--qin-accent-rgb), 0.18);
   animation: pulse 1.4s ease-in-out infinite;
 }
 
@@ -533,7 +533,7 @@ onBeforeUnmount(() => {
 .editor__tips {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11px;
-  color: rgba(232, 217, 194, 0.5);
+  color: rgba(var(--qin-ink-rgb), 0.5);
   white-space: nowrap;
 }
 
@@ -541,7 +541,7 @@ onBeforeUnmount(() => {
   margin: 12px 0 0;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11.5px;
-  color: #cfa46a;
+  color: var(--qin-accent);
 }
 
 .radios {
@@ -556,7 +556,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 9px;
   font-size: 13px;
-  color: rgba(231, 227, 220, 0.7);
+  color: rgba(var(--qin-ink-rgb), 0.7);
   cursor: pointer;
   user-select: none;
 }
@@ -572,18 +572,18 @@ onBeforeUnmount(() => {
 .radio__dot {
   width: 14px;
   height: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  border: 1px solid rgba(var(--qin-w-rgb), 0.28);
   border-radius: 50%;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .radio input:checked + .radio__dot {
-  border-color: #cfa46a;
-  box-shadow: inset 0 0 0 3px #1a1a1a, inset 0 0 0 8px #cfa46a;
+  border-color: var(--qin-accent);
+  box-shadow: inset 0 0 0 3px var(--qin-surface), inset 0 0 0 8px var(--qin-accent);
 }
 
 .radio input:focus-visible + .radio__dot {
-  outline: 1px solid rgba(207, 164, 106, 0.75);
+  outline: 1px solid rgba(var(--qin-accent-rgb), 0.75);
   outline-offset: 3px;
 }
 </style>

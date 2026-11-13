@@ -1,13 +1,37 @@
 :root {
   color-scheme: dark;
 
-  /* 配色只用：深灰底 / 暖木色 / 黑白琴键 */
+  /*
+   * 外观主题的默认值 = 「舞台」主题（src/theme/themes.ts 里的 stage）。
+   * 运行时由 JS 把当前主题写到 <html> 的行内样式上覆盖这里；
+   * 这里是首屏（脚本还没跑）和 JS 失效时的兜底，改动时要与 themes.ts 同步。
+   * 注意：琴体（PianoKeyboard）不吃这些变量，任何主题下都是同一架琴。
+   */
   --qin-bg: #1a1a1a;
   --qin-bg-deep: #141414;
-  --qin-ink: #e7e3dc;
-  --qin-line: rgba(231, 227, 220, 0.07);
-  --qin-wood: #2a1b13;
-  --qin-amber: #cfa46a;
+  --qin-surface: #171717;
+  --qin-surface-2: #202020;
+  --qin-surface-hover: #242424;
+  --qin-surface-dim: #1c1c1c;
+  --qin-surface-active: #241b12;
+  --qin-surface-tab: #221a12;
+  --qin-ink-rgb: 231, 227, 220;
+  --qin-w-rgb: 255, 255, 255;
+  --qin-accent: #cfa46a;
+  --qin-accent-rgb: 207, 164, 106;
+  --qin-accent-strong: #e5c79a;
+  --qin-accent-dim: #b98d55;
+  --qin-danger: #8f3a2d;
+  --qin-danger-rgb: 207, 120, 90;
+  --qin-danger-strong: #e8b4a2;
+  --qin-glow: none;
+  --qin-viz-top-rgb: 255, 233, 200;
+  --qin-viz-mid-rgb: 224, 160, 90;
+  --qin-viz-bottom-rgb: 126, 70, 26;
+  /* 舞台顶光：一束暖色，让乐器"浮在暗处"，不用任何彩色渐变 */
+  --qin-backdrop:
+    radial-gradient(1100px 520px at 50% -12%, rgba(150, 108, 66, 0.2), rgba(150, 108, 66, 0) 62%),
+    radial-gradient(760px 420px at 50% 8%, rgba(231, 227, 220, 0.05), rgba(231, 227, 220, 0) 70%);
 
   font-family:
     'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
@@ -30,14 +54,12 @@ body {
 
 body {
   min-height: 100vh;
-  color: var(--qin-ink);
+  color: rgb(var(--qin-ink-rgb));
   background-color: var(--qin-bg);
-  /* 舞台顶光：一束暖色，让乐器"浮在暗处"，不用任何彩色渐变 */
-  background-image:
-    radial-gradient(1100px 520px at 50% -12%, rgba(150, 108, 66, 0.2), rgba(150, 108, 66, 0) 62%),
-    radial-gradient(760px 420px at 50% 8%, rgba(231, 227, 220, 0.05), rgba(231, 227, 220, 0) 70%);
+  background-image: var(--qin-backdrop);
   background-repeat: no-repeat;
   background-attachment: fixed;
+  transition: background-color 240ms ease;
 }
 
 #app {
@@ -54,11 +76,11 @@ button {
 }
 
 :focus-visible {
-  outline: 1px solid rgba(207, 164, 106, 0.7);
+  outline: 1px solid rgba(var(--qin-accent-rgb), 0.7);
 }
 
 ::selection {
-  background: rgba(207, 164, 106, 0.28);
+  background: rgba(var(--qin-accent-rgb), 0.28);
 }
 
 /* -------------------------------------------------- 控制台面板共用排版 */
@@ -75,7 +97,7 @@ button {
   font-size: 14px;
   font-weight: 500;
   letter-spacing: 0.04em;
-  color: #e7e3dc;
+  color: rgb(var(--qin-ink-rgb));
 }
 
 .panel-title__num {
@@ -84,11 +106,11 @@ button {
   justify-content: center;
   width: 17px;
   height: 17px;
-  border: 1px solid rgba(207, 164, 106, 0.55);
+  border: 1px solid rgba(var(--qin-accent-rgb), 0.55);
   border-radius: 50%;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 10px;
-  color: #cfa46a;
+  color: var(--qin-accent);
 }
 
 .panel-row {
@@ -102,7 +124,7 @@ button {
   margin: 16px 0 0;
   font-size: 12.5px;
   line-height: 1.7;
-  color: rgba(231, 227, 220, 0.36);
+  color: rgba(var(--qin-ink-rgb), 0.36);
 }
 
 .panel-desc--tight {
