@@ -31,6 +31,8 @@ interface Voice {
   gain: GainNode;
   startedAt: number;
   released: boolean;
+  /** 释放被安排在哪一刻；`Infinity` = 还没安排 */
+  releaseAt: number;
 }
 
 export interface PianoEngineOptions {
@@ -365,8 +367,10 @@ export class PianoEngine {
     const ctx = this.ctx;
     if (!ctx) return;
     const at = Number.isFinite(when) ? Math.max(when as number, ctx.currentTime) : ctx.currentTime;
+    // 不能用 `!voice.released` 过滤：playNote 会把释放提前排到将来并立刻标记 released，
+    // 这样过滤会让手动的 noteOff 完全失效。是否真的要释放交给 releaseVoice 按时刻判断。
     for (const voice of this.voices) {
-      if (voice.pitch === pitch && !voice.released) this.releaseVoice(voice, at);
+      if (voice.pitch === pitch) this.releaseVoice(voice, at);
     }
   }
 
@@ -378,8 +382,9 @@ export class PianoEngine {
   stopAll(): void {
     const ctx = this.ctx;
     if (!ctx) return;
+    // 同 noteOff：已经排了「未来释放」的音（playNote）也要掐掉，判断在 releaseVoice 里做
     for (const voice of this.voices) {
-      if (!voice.released) this.releaseVoice(voice, ctx.currentTime);
+      this.releaseVoice(voice, ctx.currentTime);
     }
   }
 
@@ -452,6 +457,7 @@ export class PianoEngine {
       gain,
       startedAt: params.when,
       released: false,
+      releaseAt: Number.POSITIVE_INFINITY,
     };
     this.voices.push(voice);
 
@@ -469,12 +475,43 @@ export class PianoEngine {
     }
   }
 
+  /**
+   * 释放一颗音。
+   *
+   * 两个坑都在这里：
+   *
+   * 1. `playNote()` 会把释放**提前排到** `when + duration`，并且立刻把 `released` 置为 true。
+   *    如果这里简单地 `if (voice.released) return`，那么停下来时（`stopAll()` / `noteOff()`）
+   *    这颗音就再也掐不掉了 —— 表现为「按了暂停，音却照常响满一整拍」。
+   *    所以判定看的是**时刻**：只有「已经按不晚于这一时刻释放过」才跳过。
+   *
+   * 2. 还没起振的音（前瞻调度里已经排进音频图，`start` 时刻在未来）必须硬杀，不能走释放包络：
+   *    `cancelScheduledValues` 会连 `setValueAtTime(0, when)` 一起取消，gain 回落到默认值 1，
+   *    于是 `setTargetAtTime(0, at)` 是从 1 开始衰减的 —— 等 source 在未来时刻真的 start 时
+   *    仍有残余增益，实测会在那一刻冒一个约 -36dBFS 的「嗒」。
+   */
   private releaseVoice(voice: Voice, at: number, timeConstant = 0.05): void {
-    if (voice.released) return;
-    voice.released = true;
     const ctx = this.ctx;
     if (!ctx) return;
+    // 已经按「不晚于这次」的时刻释放过，不必重复
+    if (voice.released && at >= voice.releaseAt - 1e-6) return;
+
     const gainParam = voice.gain.gain;
+    const pending = voice.startedAt > at;
+    voice.released = true;
+    voice.releaseAt = at;
+
+    if (pending) {
+      try {
+        gainParam.cancelScheduledValues(0);
+        gainParam.setValueAtTime(0, at);
+        voice.source.stop(at);
+      } catch {
+        /* source 状态异常时忽略 */
+      }
+      return;
+    }
+
     try {
       gainParam.cancelScheduledValues(at);
       gainParam.setTargetAtTime(0, at, timeConstant);

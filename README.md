@@ -61,13 +61,14 @@ src/
   components/ 钢琴键盘、音符频谱、控制台（页签 / 显示 / 声音 / 键位）、键盘映射图、开关、主题菜单
   theme/      外观主题（token 表、应用与持久化）
   parser/     字符谱解析（字符表 + parseScore）
+  transport/  播放时间轴（权威时钟 + 前瞻调度）与唤醒器
   data/       内置示例谱面
   types/      共享类型（NoteEvent / KeyBinding / DeckTab）
 tests/        Vitest 单元测试
 docs/screenshots/  界面截图（PR 用）
 ```
 
-后续阶段会补上 `src/transport/`（权威时钟与调度）、`src/game/`（判定引擎）。
+后续阶段会补上 `src/game/`（判定引擎）。
 
 ## 钢琴布局数值（对齐 AutoPiano）
 
@@ -188,6 +189,32 @@ docs/screenshots/  界面截图（PR 用）
 | 小星星 | C 大调 | 96 | 6 个乐句 + 结尾 C 大三和弦，演示和弦与延长 |
 | 欢乐颂 | C 大调 | 104 | 贝多芬主题，两段重复 |
 
+## 播放时间轴（Transport）
+
+`src/transport/transport.ts` 是手写的时间轴，不依赖任何调度库。
+
+**只有一个时钟：`AudioContext.currentTime`。** 定时器只负责「醒来看看」，从不参与计时：
+
+1. 醒来（默认 **25ms** 一次）先读音频时钟，算出「现在第几拍」；
+2. 把 **100ms** 前瞻窗内该响的音，按音频时间轴上的**绝对时刻**交给引擎
+   （引擎用 `AudioBufferSourceNode.start(when)` 落点，误差在采样级）；
+3. 通过 `onTick` 把当前 `beat` / `seconds` / `progress` 报给界面。
+
+所以唤醒间隔抖动 ±10ms、甚至后台标签页被节流，都不会让音符提前或延后 —— 落点是绝对时刻，不是「从现在起 25ms 后」。
+醒来时若某个音的时刻已经过去（页面卡了），会被拉到当前时刻发声并标记 `late`，**不吞音**。
+
+| 项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `lookahead` | 100ms | 提前多久把音交给引擎 |
+| `tickIntervalMs` | 25ms | 唤醒间隔 |
+| `leadIn` | 50ms | 起播留白，避免首音的 `when` 走到引擎时已经过期 |
+
+- 唤醒器跑在 **Web Worker** 里（`src/transport/ticker.ts`）：主线程 timer 在后台标签页会被节流到 1s，
+  撑不住 100ms 的前瞻窗；Worker 不受该节流影响，环境不支持时回落主线程 `setInterval`。
+- 状态机：`idle → playing → paused → playing`，`stop()` 归零，播完触发一次 `onEnd`；播完再按播放从头开始。
+- `pause()` / `stop()` / `seek()` 会触发 `onCancelAll`：前瞻窗里的音**已经进了音频图**，光停定时器停不掉它们。
+- 拍 ↔ 秒：`beatToSeconds(beat) = beat × 60 / bpm`，`secondsToBeat` 为其逆运算，都挂在实例上，界面与测试共用。
+
 ## 键位：C 大调（只有白键）
 
 默认布局在 `src/keyboard/keyMap.ts` 的 `LAYOUT_ROWS` 里，逐颗键写明音高，覆盖 C2–C7 的 36 个白键：
@@ -307,6 +334,8 @@ npm run test
 - `tests/legacyTone.test.ts`：软削波曲线（端点归一、奇对称、单调、驱动量）
 - `tests/gain.test.ts`：峰值检测、逐音归一化、包络衰减时常数、总线限幅与下压曲线
 - `tests/labels.test.ts`：唱名映射（含黑键升号、跨八度）、三档音名模式、黑键提示拆行
+- `tests/transport.test.ts`：拍位 ↔ 秒换算（60 / 80 / 90 / 120 BPM、可逆性）、前瞻窗边界、绝对时刻与唤醒时刻无关、
+  迟到不吞音、不重复排程、和弦同刻、暂停 / 继续 / 停止 / 跳转 / 播完、参数校验
 - `tests/scoreParser.test.ts`：字符谱解析（音高与 startBeat、空白游程、休止 / 延长 / 和弦 / 转义 / 注释、非法字符与行列定位、strict 抛错、两首内置谱的音高与总时长）
 - `tests/themes.test.ts`：外观主题（id 唯一、token 填满且与 CSS 变量一一对应、`style.css` 默认值与 stage 一致、应用 / 未知 id 回落 / 持久化）
 - `tests/keyMapCustom.test.ts`：自定义绑定与空置（覆盖默认键位、绑黑键、空置压住默认、绑定优先于空置、非法条目过滤）
