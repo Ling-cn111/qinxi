@@ -180,6 +180,16 @@ export class Transport {
     return this.playingValue ? this.beatAt(this.now()) : this.pausedBeat;
   }
 
+  /**
+   * 绝对音频时刻 → 拍位（不钳制）。播放中才有效，暂停时返回停留点。
+   * 延迟校准的修正入口：判定 / 清扫前先对时刻做修正
+   * （`corrected = now − inputOffset`），再用本方法换算拍位 ——
+   * 与内部 `rawBeat` 同一个公式同一个锚点，保证两边拍位可加减。
+   */
+  beatFromAudioTime(timeSec: number): number {
+    return this.playingValue ? this.beatAt(timeSec) : this.pausedBeat;
+  }
+
   get snapshot(): TransportSnapshot {
     return this.playingValue ? this.snapshotAt(this.beat, 0) : this.lastSnapshot;
   }
