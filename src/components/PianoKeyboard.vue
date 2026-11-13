@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   BLACK_HEIGHT_RATIO,
   buildKeyboardLayout,
@@ -56,8 +56,17 @@ const blackHint = (pitch: number) => splitHint(hintOf(pitch));
 const nameOf = (pitch: number) => noteLabelFor(pitch, props.noteMode);
 /** 八度配色：白键取深色版、黑键取浅色版 */
 const keyColor = (pitch: number, onBlack: boolean) => colorForPitch(pitch, onBlack);
-/** 顶盖提示：默认布局只有白键，黑键靠鼠标或自定义键位 */
-const bandTip = 'C 大调 · 仅白键';
+/**
+ * 编辑态的提示直接放在琴习那行中间：选中琴键后视线还在琴键上，
+ * 提示离得越近越不容易漏看；面板里那条提示条仍然保留（两处同步）。
+ */
+const bandHint = computed(() => {
+  if (!props.editMode) return '';
+  if (props.editPitch != null) {
+    return `${props.keyMap.noteNameFor(props.editPitch)} 已选中 · 按下要绑定的物理键 · Backspace 恢复 · Esc 退出`;
+  }
+  return '点一个琴键选中音，再按下要绑定的物理键 · Delete 空置 · Esc 退出';
+});
 const pressedClass = (pitch: number) => props.pressed.has(pitch) ? 'is-pressed' : '';
 const targetClass = (pitch: number) =>
   props.editPitch === pitch ? 'is-target' : '';
@@ -109,7 +118,7 @@ defineExpose({ scrollToViewport });
     <!-- AutoPiano 顶盖：黑漆面板 + 内外双线边框 -->
     <div class="piano-band">
       <span class="piano-band__brand">琴习 QINXI</span>
-      <span class="piano-band__tip">{{ bandTip }}</span>
+      <span v-if="bandHint" class="piano-band__hint" role="status">{{ bandHint }}</span>
     </div>
 
     <div ref="viewportRef" class="piano-key-wrap">
@@ -196,14 +205,51 @@ defineExpose({ scrollToViewport });
   color: rgba(255, 255, 255, 0.62);
 }
 
-.piano-band__tip {
+/* 编辑提示：贴在顶盖正中，只在自定义键位时出现 */
+.piano-band__hint {
   position: absolute;
+  left: 50%;
   top: 50%;
-  right: 20px;
-  transform: translateY(-50%);
-  color: #fff;
-  font-size: 14px;
-  opacity: 0.76;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 300px);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: #e5c79a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.piano-band__hint::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #cfa46a;
+  box-shadow: 0 0 0 3px rgba(207, 164, 106, 0.16);
+  animation: bandHintPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes bandHintPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (max-width: 900px) {
+  .piano-band__hint {
+    display: none;
+  }
 }
 
 /* --------------------------------------- AutoPiano: .piano-key-wrap */

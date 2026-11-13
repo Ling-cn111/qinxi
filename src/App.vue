@@ -16,6 +16,14 @@ import {
   loadCustomBindings,
   saveCustomBindings,
 } from '@/keyboard/customKeymap';
+import {
+  bindingsSignature,
+  loadKeymapSchemes,
+  MAX_SCHEME_NAME,
+  newSchemeId,
+  saveKeymapSchemes,
+  type KeymapScheme,
+} from '@/keyboard/keymapSchemes';
 import { midiToName } from '@/audio/note';
 import type { NoteLabelMode } from '@/keyboard/labels';
 import { DEFAULT_INSTRUMENT_ID } from '@/data/instruments';
@@ -25,12 +33,25 @@ import type { DeckTab } from '@/types';
 const engine = new PianoEngine();
 
 const customBindings = ref<CustomBinding[]>(loadCustomBindings());
+const schemes = ref<KeymapScheme[]>(loadKeymapSchemes());
 
 function createKeyMap(): PianoKeyMap {
   return new PianoKeyMap({ custom: customBindings.value });
 }
 
 const keyMap = shallowRef(createKeyMap());
+
+/**
+ * 当前键位对应哪个方案：把改动列表拼成签名，和每个方案比一次。
+ * 这样无论从哪条路径改键位（绑定 / 空置 / 恢复），标签高亮都自动正确，
+ * 也不需要额外存「上次应用了哪个方案」。
+ */
+const activeSchemeId = computed<string | null>(() => {
+  const current = bindingsSignature(customBindings.value);
+  const hit = schemes.value.find((item) => bindingsSignature(item.bindings) === current);
+  if (hit) return hit.id;
+  return current === '' ? 'default' : null;
+});
 
 const pressed = reactive(new Set<number>());
 const status = ref<EngineStatus>(engine.status);
@@ -168,6 +189,55 @@ function resetBindings(): void {
   applyCustomBindings([]);
   editPitch.value = null;
   flash('已恢复全部默认键位，空置的音也一并恢复');
+}
+
+/** 应用方案：`default` 是内置的 C 大调，其余是保存过的快照 */
+function applyScheme(id: string): void {
+  if (id === 'default') {
+    if (customBindings.value.length === 0) {
+      flash('当前就是「C大调」默认键位');
+      return;
+    }
+    applyCustomBindings([]);
+    editPitch.value = null;
+    flash('已切回「C大调」默认键位');
+    return;
+  }
+  const scheme = schemes.value.find((item) => item.id === id);
+  if (!scheme) return;
+  applyCustomBindings(scheme.bindings.map((item) => ({ ...item })));
+  editPitch.value = null;
+  flash(`已应用方案「${scheme.name}」`);
+}
+
+/** 把当前键位存成一个具名方案（只存与默认布局不同的条目） */
+function saveScheme(rawName: string): void {
+  const name = rawName.trim().slice(0, MAX_SCHEME_NAME);
+  if (!name) {
+    flash('方案名不能为空');
+    return;
+  }
+  if (schemes.value.some((item) => item.name === name)) {
+    flash(`已有同名方案「${name}」，换个名字`);
+    return;
+  }
+  const scheme: KeymapScheme = {
+    id: newSchemeId(),
+    name,
+    bindings: customBindings.value.map((item) => ({ ...item })),
+    createdAt: Date.now(),
+  };
+  schemes.value = [...schemes.value, scheme];
+  saveKeymapSchemes(schemes.value);
+  flash(`已保存方案「${name}」`);
+}
+
+function deleteScheme(id: string): void {
+  const scheme = schemes.value.find((item) => item.id === id);
+  if (!scheme) return;
+  schemes.value = schemes.value.filter((item) => item.id !== id);
+  saveKeymapSchemes(schemes.value);
+  flash(`已删除方案「${scheme.name}」，当前键位不变`);
 }
 
 function pressPitch(pitch: number, velocity = 100): void {
@@ -354,10 +424,15 @@ onBeforeUnmount(() => {
         :edit-pitch="editPitch"
         :custom-count="customCount"
         :last-action="lastAction"
+        :schemes="schemes"
+        :active-scheme-id="activeSchemeId"
         @toggle-edit="toggleEdit"
         @restore="restoreSelected"
         @clear="clearSelected"
         @reset="resetBindings"
+        @apply-scheme="applyScheme"
+        @save-scheme="saveScheme"
+        @delete-scheme="deleteScheme"
       />
 
       <div class="foot">

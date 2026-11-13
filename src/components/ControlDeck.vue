@@ -4,6 +4,7 @@ import PanelKeymap from './PanelKeymap.vue';
 import PanelSound from './PanelSound.vue';
 import { computed } from 'vue';
 import type { PianoKeyMap } from '@/keyboard/keyMap';
+import type { KeymapScheme } from '@/keyboard/keymapSchemes';
 import { findInstrument } from '@/data/instruments';
 import type { DeckTab } from '@/types';
 
@@ -17,6 +18,8 @@ const props = defineProps<{
   editPitch: number | null;
   customCount: number;
   lastAction: string;
+  schemes: ReadonlyArray<KeymapScheme>;
+  activeSchemeId: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -24,6 +27,9 @@ const emit = defineEmits<{
   restore: [];
   clear: [];
   reset: [];
+  applyScheme: [id: string];
+  saveScheme: [name: string];
+  deleteScheme: [id: string];
 }>();
 
 const tab = defineModel<DeckTab>('tab', { required: true });
@@ -114,10 +120,15 @@ const TABS = [
         :edit-pitch="props.editPitch"
         :custom-count="props.customCount"
         :last-action="props.lastAction"
+        :schemes="props.schemes"
+        :active-scheme-id="props.activeSchemeId"
         @toggle-edit="emit('toggleEdit')"
         @restore="emit('restore')"
         @clear="emit('clear')"
         @reset="emit('reset')"
+        @apply-scheme="(id) => emit('applyScheme', id)"
+        @save-scheme="(name) => emit('saveScheme', name)"
+        @delete-scheme="(id) => emit('deleteScheme', id)"
       />
     </div>
   </section>
@@ -200,17 +211,6 @@ const TABS = [
   white-space: nowrap;
 }
 
-.deck__now {
-  margin-left: auto;
-  align-self: center;
-  padding: 0 20px;
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: rgba(231, 227, 220, 0.3);
-  white-space: nowrap;
-}
-
 .deck__body {
   padding: 22px 24px 26px;
 }
@@ -226,28 +226,10 @@ const TABS = [
   }
 
   .deck__now {
-  margin-left: auto;
-  align-self: center;
-  padding: 0 20px;
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: rgba(231, 227, 220, 0.3);
-  white-space: nowrap;
-}
+    display: none;
+  }
 
-.deck__now {
-  margin-left: auto;
-  align-self: center;
-  padding: 0 20px;
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: rgba(231, 227, 220, 0.3);
-  white-space: nowrap;
-}
-
-.deck__body {
+  .deck__body {
     padding: 18px 14px 20px;
   }
 }

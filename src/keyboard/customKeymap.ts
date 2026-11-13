@@ -9,7 +9,7 @@ const STORAGE_KEY = 'qinxi:keymap:v1';
 
 const MODIFIERS = new Set(['none', 'shift', 'alt']);
 
-function isCustomBinding(value: unknown): value is CustomBinding {
+export function isCustomBinding(value: unknown): value is CustomBinding {
   if (!value || typeof value !== 'object') return false;
   const item = value as { code?: unknown; modifier?: unknown; pitch?: unknown };
   // code === null 表示「空置」，是合法条目
