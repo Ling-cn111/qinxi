@@ -172,6 +172,14 @@ export class Transport {
     return this.playingValue ? this.clampBeat(this.beatAt(this.now())) : this.pausedBeat;
   }
 
+  /**
+   * 未钳制的当前拍位。起播留白期间它是个小负数 —— 琴键高亮要用这个：
+   * 用钳制后的 beat 会让第一个音在留白期就亮起来，比声音早 ~50ms。
+   */
+  get rawBeat(): number {
+    return this.playingValue ? this.beatAt(this.now()) : this.pausedBeat;
+  }
+
   get snapshot(): TransportSnapshot {
     return this.playingValue ? this.snapshotAt(this.beat, 0) : this.lastSnapshot;
   }

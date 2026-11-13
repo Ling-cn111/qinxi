@@ -246,6 +246,28 @@ describe('Transport：前瞻调度', () => {
   });
 });
 
+describe('Transport：rawBeat（琴键高亮用）', () => {
+  it('起播留白期间是负数，不会让首音提前亮', () => {
+    const run = harness({ notes: [note(60, 0)], leadIn: 0.05 });
+    run.transport.play();
+    run.setClock(0);
+    expect(run.transport.rawBeat).toBeCloseTo(-0.1, 10); // (0 - 0.05) / 0.5
+    expect(run.transport.beat).toBe(0); // 对外展示仍钳制在 0
+    run.setClock(0.05);
+    expect(run.transport.rawBeat).toBeCloseTo(0, 10);
+  });
+
+  it('播放中实时推进，暂停后冻结', () => {
+    const run = harness({ notes: [note(60, 0), note(62, 2)], leadIn: 0 });
+    run.transport.play();
+    run.setClock(0.6);
+    expect(run.transport.rawBeat).toBeCloseTo(1.2, 10);
+    run.transport.pause();
+    run.setClock(5);
+    expect(run.transport.rawBeat).toBeCloseTo(1.2, 10);
+  });
+});
+
 describe('Transport：播放控制', () => {
   it('play 之后进入 playing，唤醒器启动一次', () => {
     const run = harness({ notes: [note(60, 0)] });
