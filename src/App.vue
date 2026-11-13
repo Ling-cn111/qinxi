@@ -128,6 +128,8 @@ const FOLLOW_PREROLL_SECONDS = 2;
 const judgedMap = new Map<number, Grade>();
 const followStats = reactive({ perfect: 0, great: 0, good: 0, miss: 0 });
 const lastGrade = ref<Grade | null>(null);
+/** 弹完（或停止）后的结算：各档数量 + 占谱面总音符数的比例 */
+const followSummary = ref('');
 /** 跟弹进行中（判定与清扫挂在这个条件下） */
 const followActive = computed(() => playMode.value === 'follow' && playState.value === 'playing');
 let currentNotes: NoteEvent[] = [];
@@ -179,6 +181,19 @@ function stopRenderLoop(): void {
 
 // ---------------------------------------------------------------- 跟弹判定
 
+const GRADE_ORDER: ReadonlyArray<Grade> = ['perfect', 'great', 'good', 'miss'];
+
+/** 结算文案：各档数量 + 占谱面总音符数的百分比（错音多按会让 Miss 超过总数，照实显示） */
+function buildFollowSummary(totalNotes: number): string {
+  if (totalNotes === 0) return '';
+  const parts = GRADE_ORDER.map((grade) => {
+    const count = followStats[grade];
+    const percent = totalNotes > 0 ? ((count / totalNotes) * 100).toFixed(1) : '0.0';
+    return `${GRADE_LABEL[grade]} ${count} (${percent}%)`;
+  });
+  return `跟弹统计（共 ${totalNotes} 音）：${parts.join(' · ')}`;
+}
+
 function resetFollowProgress(): void {
   judgedMap.clear();
   followStats.perfect = 0;
@@ -186,6 +201,7 @@ function resetFollowProgress(): void {
   followStats.good = 0;
   followStats.miss = 0;
   lastGrade.value = null;
+  followSummary.value = '';
 }
 
 const GRADE_LABEL: Record<Grade, string> = { perfect: 'Perfect', great: 'Great', good: 'Good', miss: 'Miss' };
@@ -218,10 +234,9 @@ function judgeFollowPress(pitch: number): void {
     judgedMap,
     transport.secondsPerBeat,
   );
-  if (hit.note) {
-    judgedMap.set(hit.index, hit.grade);
-    followCanvas.value?.flash(hit.note.pitch, hit.grade);
-  }
+  if (hit.note) judgedMap.set(hit.index, hit.grade);
+  // 四档都在判定线上闪：Perfect 金 / Great·Good 白 / Miss 红
+  followCanvas.value?.flash(hit.pitch, hit.grade);
   recordJudgment(hit);
 }
 
@@ -296,6 +311,9 @@ function stopPlayback(): void {
   playState.value = 'idle';
   stopRenderLoop();
   autoPressed.value = new Set();
+  if (playMode.value === 'follow') {
+    followSummary.value = buildFollowSummary(currentNotesRef.value.length);
+  }
   updateProgress(transport.snapshot);
 }
 
@@ -305,6 +323,7 @@ function onPlaybackEnd(): void {
     for (let index = 0; index < currentNotesRef.value.length; index += 1) {
       if (!judgedMap.has(index)) recordMissed(index);
     }
+    followSummary.value = buildFollowSummary(currentNotesRef.value.length);
   }
   playState.value = 'idle';
   stopRenderLoop();
@@ -737,6 +756,7 @@ onBeforeUnmount(() => {
               <b :class="`grade-${lastGrade ?? 'none'}`">{{ lastGrade ? GRADE_LABEL[lastGrade] : '—' }}</b>
               <span>P {{ followStats.perfect }} · G {{ followStats.great }} · Good {{ followStats.good }} · Miss {{ followStats.miss }}</span>
             </span>
+            <span v-else-if="followSummary" class="player__judge player__judge--summary" role="status">{{ followSummary }}</span>
           </div>
           <button type="button" class="text-btn" @click="releaseAll">全部松开</button>
         </div>

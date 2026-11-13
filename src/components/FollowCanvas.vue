@@ -91,7 +91,17 @@ const palette = {
   accent: '207, 164, 106',
   ink: '231, 227, 220',
   white: '255, 255, 255',
+  gold: '255, 198, 92',
+  red: '255, 110, 92',
 };
+
+/** '#rrggbb' → 'r, g, b'（读主题的强调亮色当金色） */
+function hexToRgb(hex: string): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!match) return '';
+  const value = Number.parseInt(match[1], 16);
+  return `${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}`;
+}
 
 function readPalette(): void {
   if (typeof window === 'undefined') return;
@@ -100,6 +110,8 @@ function readPalette(): void {
   palette.accent = pick('--qin-accent-rgb', palette.accent);
   palette.ink = pick('--qin-ink-rgb', palette.ink);
   palette.white = pick('--qin-w-rgb', palette.white);
+  palette.gold = hexToRgb(pick('--qin-accent-strong', '#ffc65c')) || palette.gold;
+  palette.red = pick('--qin-danger-rgb', palette.red);
 }
 
 function resize(): void {
@@ -198,22 +210,26 @@ function draw(): void {
     if (!geo) continue;
     const x = (geo.left + geo.width / 2) * unit - scrollLeft;
     const t = age / FLASH_SECONDS;
-    // Perfect 最亮，Great / Good 递减
-    const strength = hit.grade === 'perfect' ? 1 : hit.grade === 'great' ? 0.72 : 0.5;
+    // 配色：Perfect 金光、Great / Good 白光（Good 更暗）、Miss 红光
+    const color =
+      hit.grade === 'perfect' ? palette.gold
+      : hit.grade === 'miss' ? palette.red
+      : palette.white;
+    const strength = hit.grade === 'perfect' ? 1 : hit.grade === 'great' ? 0.85 : hit.grade === 'good' ? 0.55 : 0.75;
     const alpha = (1 - t) * strength;
 
     // 判定线上的一小段亮条，向两边收
     const halfWidth = (geo.width * unit) / 2 * (1 - 0.35 * t);
     ctx.save();
-    ctx.shadowColor = `rgba(${palette.accent}, ${alpha})`;
+    ctx.shadowColor = `rgba(${color}, ${alpha})`;
     ctx.shadowBlur = 10;
-    ctx.fillStyle = `rgba(${palette.accent}, ${alpha})`;
+    ctx.fillStyle = `rgba(${color}, ${alpha})`;
     ctx.fillRect(x - halfWidth, lineY - 3, halfWidth * 2, 3);
     // 向上散开的光点
     ctx.beginPath();
     ctx.arc(x, lineY - 4, 4 + 14 * t, Math.PI, 0);
     ctx.closePath();
-    ctx.fillStyle = `rgba(${palette.white}, ${alpha * 0.55})`;
+    ctx.fillStyle = `rgba(${color}, ${alpha * 0.55})`;
     ctx.fill();
     ctx.restore();
   }
@@ -237,9 +253,8 @@ function stopLoop(): void {
   draw(); // 补一帧静止画面（暂停 / 停止后的残影清掉）
 }
 
-/** 弹对了在判定线上闪一下（App 判定成功时调用；Miss 不闪） */
+/** 判定后在判定线上闪一下（App 判定完成就调用，Miss 闪红光） */
 function flash(pitch: number, grade: Grade): void {
-  if (grade === 'miss') return;
   flashes.push({ pitch, born: performance.now(), grade });
 }
 
