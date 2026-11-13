@@ -785,6 +785,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unsubscribeStatus?.();
   transport.dispose();
+  calibrationTransport.dispose();
   stopRenderLoop();
   window.clearTimeout(lastActionTimer);
   window.removeEventListener('keydown', onKeyDown);
