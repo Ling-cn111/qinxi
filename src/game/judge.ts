@@ -9,18 +9,17 @@ import type { NoteEvent } from '@/types';
  * 与谱面里判定线附近的 `NoteEvent` 做**音高 + 时间**双重比对：
  *
  * - **音高**：只匹配同 pitch 的音符；附近没有同音高的音 → 直接 Miss（错音）；
- * - **时间**：按 |偏差| 分档（毫秒，对 96–120 BPM 的手感校准过）：
+ * - **时间**：按 |偏差| 分档（毫秒，三档，对 96–120 BPM 的手感校准过）：
  *
  * | |偏差| | 判定 |
  * | --- | --- |
- * | ≤ 40ms | Perfect |
- * | 40–80ms | Great |
+ * | ≤ 80ms | Perfect |
  * | 80–140ms | Good |
  * | > 140ms / 错音 / 漏按 | Miss |
  *
  * ## 边界约定
  *
- * 档位边界**闭区间**（40ms 整算 Perfect，80ms 整算 Great，140ms 整算 Good），
+ * 档位边界**闭区间**（80ms 整算 Perfect，140ms 整算 Good），
  * 浮点比较带 1e-9 容差 —— 单元测试用恰好在边界上的值锁死这个行为。
  *
  * ## 本模块刻意不知道的事
@@ -31,23 +30,20 @@ import type { NoteEvent } from '@/types';
  * - 不要求 notes 有序（线性扫描），但调用方传解析器的有序输出效率一致。
  */
 
-/** Perfect：偏差 ≤ 40ms */
-export const PERFECT_MS = 40;
-/** Great：偏差 ≤ 80ms */
-export const GREAT_MS = 80;
+/** Perfect：偏差 ≤ 80ms（原 Great 档已并入） */
+export const PERFECT_MS = 80;
 /** Good：偏差 ≤ 140ms；再大就是 Miss */
 export const GOOD_MS = 140;
 
 /** 浮点比较容差（拍位） */
 const EPS = 1e-9;
 
-export type Grade = 'perfect' | 'great' | 'good' | 'miss';
+export type Grade = 'perfect' | 'good' | 'miss';
 
-/** 按毫秒偏差分档。边界闭区间：±40 → Perfect，±80 → Great，±140 → Good。 */
+/** 按毫秒偏差分档。边界闭区间：±80 → Perfect，±140 → Good，之外 Miss。 */
 export function gradeForDelta(deltaMs: number): Grade {
   const abs = Math.abs(deltaMs);
   if (abs <= PERFECT_MS) return 'perfect';
-  if (abs <= GREAT_MS) return 'great';
   if (abs <= GOOD_MS) return 'good';
   return 'miss';
 }
@@ -107,7 +103,7 @@ export interface JudgedMarks {
  * 判定一次按键。
  *
  * 在**同 pitch 且未被判定过**的音符里找离 hitBeat 最近的一个：
- * - 距离在 Good 窗口（±140ms）内 → 按偏差分档（可能 Perfect / Great / Good）；
+ * - 距离在 Good 窗口（±140ms）内 → 按偏差分档（Perfect 或 Good）；
  * - 窗口内没有同 pitch 的未判定音符 → Miss（错音或按键太早 / 太晚）。
  *
  * 注意：超出 Good 窗口的按键不消耗音符 —— 音符留给「漏按清扫」去判 Miss

@@ -5,7 +5,6 @@ import {
   collectMissed,
   gradeForDelta,
   GOOD_MS,
-  GREAT_MS,
   judgeHit,
   msToBeats,
   PERFECT_MS,
@@ -28,9 +27,6 @@ describe('gradeForDelta：分档边界（闭区间）', () => {
     [0, 'perfect'],
     [PERFECT_MS, 'perfect'],
     [-PERFECT_MS, 'perfect'],
-    [40.0001, 'great'],
-    [GREAT_MS, 'great'],
-    [-GREAT_MS, 'great'],
     [80.0001, 'good'],
     [GOOD_MS, 'good'],
     [-GOOD_MS, 'good'],
@@ -95,15 +91,15 @@ describe('judgeHit：时间判定', () => {
     expect(result.note?.startBeat).toBe(4);
   });
 
-  it('±40ms 边界内 → Perfect；±40ms 出头 → Great', () => {
+  it('±80ms 内 → Perfect（原 Great 档已并入）', () => {
     expect(hit(30).grade).toBe('perfect');
     expect(hit(-30).grade).toBe('perfect');
-    expect(hit(41).grade).toBe('great');
-    expect(hit(-41).grade).toBe('great');
+    expect(hit(41).grade).toBe('perfect');
+    expect(hit(75).grade).toBe('perfect');
+    expect(hit(-79).grade).toBe('perfect');
   });
 
-  it('±80ms 内 → Great；出头 → Good', () => {
-    expect(hit(75).grade).toBe('great');
+  it('80ms 出头 → Good', () => {
     expect(hit(81).grade).toBe('good');
     expect(hit(-85).grade).toBe('good');
   });

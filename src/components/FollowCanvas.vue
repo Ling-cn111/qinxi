@@ -210,12 +210,12 @@ function draw(): void {
     if (!geo) continue;
     const x = (geo.left + geo.width / 2) * unit - scrollLeft;
     const t = age / FLASH_SECONDS;
-    // 配色：Perfect 金光、Great / Good 白光（Good 更暗）、Miss 红光
+    // 配色：Perfect 金光、Good 白光、Miss 红光
     const color =
       hit.grade === 'perfect' ? palette.gold
       : hit.grade === 'miss' ? palette.red
       : palette.white;
-    const strength = hit.grade === 'perfect' ? 1 : hit.grade === 'great' ? 0.85 : hit.grade === 'good' ? 0.55 : 0.75;
+    const strength = hit.grade === 'perfect' ? 1 : hit.grade === 'good' ? 0.7 : 0.75;
     const alpha = (1 - t) * strength;
 
     // 判定线上的一小段亮条，向两边收

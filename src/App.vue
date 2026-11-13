@@ -126,7 +126,7 @@ const followBpm = ref(96);
 const FOLLOW_PREROLL_SECONDS = 2;
 /** 跟弹：音符下标 → 判定等级。判定频率高，走可变对象，不走 Vue 响应式 */
 const judgedMap = new Map<number, Grade>();
-const followStats = reactive({ perfect: 0, great: 0, good: 0, miss: 0 });
+const followStats = reactive({ perfect: 0, good: 0, miss: 0 });
 const lastGrade = ref<Grade | null>(null);
 /** 弹完（或停止）后的结算：各档数量 + 占谱面总音符数的比例 */
 const followSummary = ref('');
@@ -181,7 +181,7 @@ function stopRenderLoop(): void {
 
 // ---------------------------------------------------------------- 跟弹判定
 
-const GRADE_ORDER: ReadonlyArray<Grade> = ['perfect', 'great', 'good', 'miss'];
+const GRADE_ORDER: ReadonlyArray<Grade> = ['perfect', 'good', 'miss'];
 
 /** 结算文案：各档数量 + 占谱面总音符数的百分比（错音多按会让 Miss 超过总数，照实显示） */
 function buildFollowSummary(totalNotes: number): string {
@@ -197,14 +197,13 @@ function buildFollowSummary(totalNotes: number): string {
 function resetFollowProgress(): void {
   judgedMap.clear();
   followStats.perfect = 0;
-  followStats.great = 0;
   followStats.good = 0;
   followStats.miss = 0;
   lastGrade.value = null;
   followSummary.value = '';
 }
 
-const GRADE_LABEL: Record<Grade, string> = { perfect: 'Perfect', great: 'Great', good: 'Good', miss: 'Miss' };
+const GRADE_LABEL: Record<Grade, string> = { perfect: 'Perfect', good: 'Good', miss: 'Miss' };
 
 function fmtDelta(deltaMs: number): string {
   const rounded = Math.round(deltaMs);
@@ -754,7 +753,7 @@ onBeforeUnmount(() => {
             <span class="player__beat">{{ playProgressText }}</span>
             <span v-if="playMode === 'follow' && playState !== 'idle'" class="player__judge">
               <b :class="`grade-${lastGrade ?? 'none'}`">{{ lastGrade ? GRADE_LABEL[lastGrade] : '—' }}</b>
-              <span>P {{ followStats.perfect }} · G {{ followStats.great }} · Good {{ followStats.good }} · Miss {{ followStats.miss }}</span>
+              <span>Perfect {{ followStats.perfect }} · Good {{ followStats.good }} · Miss {{ followStats.miss }}</span>
             </span>
             <span v-else-if="followSummary" class="player__judge player__judge--summary" role="status">{{ followSummary }}</span>
           </div>
@@ -1093,8 +1092,7 @@ onBeforeUnmount(() => {
 }
 
 .player__judge .grade-perfect { color: var(--qin-accent-strong); }
-.player__judge .grade-great { color: rgb(var(--qin-ink-rgb)); }
-.player__judge .grade-good { color: rgba(var(--qin-ink-rgb), 0.66); }
+.player__judge .grade-good { color: rgb(var(--qin-ink-rgb)); }
 .player__judge .grade-miss { color: var(--qin-danger-strong); }
 
 .player {
