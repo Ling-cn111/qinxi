@@ -1,20 +1,22 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
 import KeyMapDiagram from './KeyMapDiagram.vue';
-import { KEYMAP_PRESETS, type PianoKeyMap, type KeymapPresetId } from '@/keyboard/keyMap';
+import { KEYMAP_ROWS, type PianoKeyMap } from '@/keyboard/keyMap';
+import { midiToName } from '@/audio/note';
 
 /**
- * 「键位」页：方案选择 + 自定义键位 + 键盘映射图。
+ * 「键位」页：默认布局说明 + 自定义键位（绑定 / 空置）+ 键盘映射图。
  *
- * 自定义流程：点「自定义键位」→ 在钢琴上点一个音 → 按下要绑定的物理键。
- * 绑定关系交给 App 处理（它持有 keyMap 与本地存储），这里只负责交互与展示。
+ * 自定义流程：点「自定义键位」→ 在钢琴上点一个音 → 按下要绑定的物理键；
+ * 也可以按 Delete 把这个音空置（不绑任何键）。绑定关系交给 App 处理
+ * （它持有 keyMap 与本地存储），这里只负责交互与展示。
  */
 const props = defineProps<{
   keyMap: PianoKeyMap;
   pressed: ReadonlySet<number>;
   /** 编辑态下已选中的音高 */
   editPitch: number | null;
-  /** 已自定义的条目数 */
+  /** 改动条目数（绑定 + 空置） */
   customCount: number;
   /** 操作反馈（几秒后自动消失） */
   lastAction: string;
@@ -23,23 +25,32 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggleEdit: [];
   restore: [];
+  clear: [];
   reset: [];
 }>();
 
 const editMode = defineModel<boolean>('editMode', { required: true });
 const mode = defineModel<'char' | 'note'>('mode', { required: true });
-const preset = defineModel<KeymapPresetId>('preset', { required: true });
 
 const confirmingReset = ref(false);
 let resetTimer: number | undefined;
 
-const activePreset = computed(
-  () => KEYMAP_PRESETS.find((item) => item.id === preset.value) ?? KEYMAP_PRESETS[0],
+const clearedNames = computed(() =>
+  [...props.keyMap.clearedPitches].sort((a, b) => a - b).map((pitch) => midiToName(pitch)),
 );
 
-const statusText = computed(() =>
-  props.customCount > 0 ? `已自定义 ${props.customCount} 处 · 其余沿用方案` : '当前未自定义任何键位',
-);
+const statusText = computed(() => {
+  if (props.customCount === 0) return '默认键位：只有白键，没有空置的音';
+  const parts: string[] = [];
+  const binds = props.customCount - clearedNames.value.length;
+  if (binds > 0) parts.push(`自定义 ${binds} 处`);
+  if (clearedNames.value.length > 0) {
+    const list = clearedNames.value.slice(0, 4).join(' ');
+    const more = clearedNames.value.length > 4 ? ' …' : '';
+    parts.push(`空置 ${clearedNames.value.length} 个音（${list}${more}）`);
+  }
+  return parts.join(' · ');
+});
 
 const editHint = computed(() => {
   if (props.editPitch !== null) {
@@ -85,36 +96,41 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
       </div>
     </div>
 
-    <div class="presets" role="radiogroup" aria-label="键位方案">
-      <button
-        v-for="item in KEYMAP_PRESETS"
-        :key="item.id"
-        type="button"
-        role="radio"
-        class="preset"
-        :aria-checked="item.id === preset"
-        :class="{ 'is-active': item.id === preset }"
-        @click="preset = item.id"
-      >
-        <span class="preset__name">{{ item.short }}</span>
-        <span class="preset__range">{{ item.range }}</span>
-      </button>
+    <div class="layout" role="table" aria-label="默认键位布局">
+      <div v-for="row in KEYMAP_ROWS" :key="row.label" class="layout__row" role="row">
+        <span class="layout__label" role="cell">{{ row.label }}</span>
+        <span class="layout__keys" role="cell">{{ row.keys }}</span>
+        <span class="layout__range" role="cell">{{ row.range }}</span>
+      </div>
     </div>
 
-    <p class="preset__desc">{{ activePreset.desc }}</p>
+    <p class="layout__desc">
+      一排键 = 一个八度，从左到右依次是 <b>C D E F G A B</b>，五排正好覆盖 C2–B6。
+      默认不绑黑键（C♯ D♯ F♯ G♯ A♯）—— 键盘上没有多余的位置，硬绑只能靠 Shift 或挤占别的行。
+      需要黑键时用鼠标点琴键，或在下面自定义到任意空闲键上。
+    </p>
+
     <p class="status">{{ statusText }}</p>
 
     <div v-if="editMode" class="editor">
       <span class="editor__dot" aria-hidden="true"></span>
       <span class="editor__text">{{ editHint }}</span>
-      <span class="editor__tips">Backspace 恢复该音 · Esc 退出</span>
+      <span class="editor__tips">Backspace 恢复默认 · Delete 空置 · Esc 退出</span>
       <button
         v-if="editPitch !== null"
         type="button"
         class="ghost ghost--small"
         @click="emit('restore')"
       >
-        恢复该音默认
+        恢复默认
+      </button>
+      <button
+        v-if="editPitch !== null"
+        type="button"
+        class="ghost ghost--small"
+        @click="emit('clear')"
+      >
+        空置此音
       </button>
     </div>
 
@@ -139,7 +155,8 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
 
     <p class="panel-desc panel-desc--tight">
       键帽按八度着色，同一组音阶同一个颜色；演奏时点亮，被自定义过的键多一条暖色底边。
-      小键盘（<b>N1–N0</b>、<b>N+ N− N× N÷</b>）同样可以绑，标签前的 <b>N</b> 表示小键盘。
+      没有音名的键（<b>Tab</b>、<b>Caps</b>、标点、以及数字排的 <b>8 9 0 - =</b>）是空闲的，
+      想用哪个就在上面选中一个音再按它。
     </p>
 
     <KeyMapDiagram
@@ -170,57 +187,44 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
   gap: 10px;
 }
 
-.presets {
+/* 默认布局：一排一个八度的文字表 */
+.layout {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-direction: column;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
-.preset {
-  display: inline-flex;
+.layout__row {
+  display: flex;
   align-items: baseline;
-  gap: 8px;
-  min-height: 36px;
-  padding: 0 14px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-  background: #202020;
-  color: rgba(231, 227, 220, 0.62);
-  font-family: inherit;
-  cursor: pointer;
-  transition:
-    border-color 120ms ease,
-    background 120ms ease,
-    color 120ms ease;
-}
-
-.preset:hover {
-  border-color: rgba(207, 164, 106, 0.42);
-  color: #e7e3dc;
-}
-
-.preset.is-active {
-  border-color: rgba(207, 164, 106, 0.68);
-  background: #241b12;
-  color: #e5c79a;
-}
-
-.preset__name {
-  font-size: 13px;
-}
-
-.preset__range {
+  gap: 16px;
+  padding: 7px 10px 7px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  color: rgba(231, 227, 220, 0.32);
+  font-size: 12px;
 }
 
-.preset.is-active .preset__range {
-  color: rgba(229, 199, 154, 0.6);
+.layout__label {
+  flex: 0 0 46px;
+  color: rgba(231, 227, 220, 0.34);
+  font-size: 11px;
+  letter-spacing: 0.06em;
 }
 
-.preset__desc {
+.layout__keys {
+  flex: 1 1 auto;
+  letter-spacing: 0.14em;
+  color: rgba(231, 227, 220, 0.74);
+}
+
+.layout__range {
+  flex: 0 0 auto;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: rgba(229, 199, 154, 0.5);
+}
+
+.layout__desc {
   margin: 12px 0 0;
   padding: 12px 14px;
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -228,6 +232,12 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
   font-size: 12.5px;
   line-height: 1.7;
   color: rgba(231, 227, 220, 0.46);
+}
+
+.layout__desc b {
+  font-weight: 400;
+  color: rgba(231, 227, 220, 0.78);
+  letter-spacing: 0.06em;
 }
 
 .status {

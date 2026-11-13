@@ -1,94 +1,37 @@
-import { hasBlackAbove, hasBlackBelow, MAX_MIDI, MIN_MIDI, midiToName, WHITE_PITCH_CLASSES } from '@/audio/note';
+import { MAX_MIDI, MIN_MIDI, midiToName, WHITE_PITCH_CLASSES } from '@/audio/note';
 import type { KeyBinding, KeyModifier } from '@/types';
 
-/** 「宽音域」方案的基准起点：C2 */
+/** 默认布局的起点：C2。每往上一排升一个八度。 */
 export const BASE_START_MIDI = 36;
 
-/** 「钢琴式」方案的基准起点：C3 */
-export const PIANO_START_MIDI = 48;
-
-/**
- * 四排字母 / 数字键（由低到高），供「宽音域」方案使用。
- * 每项为 [KeyboardEvent.code, 键帽字符]。
- * 用 code 而非 key，避免 Shift 改变字符（'z' → 'Z'）导致匹配失败。
- */
-const WHITE_ROWS: ReadonlyArray<ReadonlyArray<readonly [string, string]>> = [
-  // 下排 —— 最低
-  [
-    ['KeyZ', 'z'],
-    ['KeyX', 'x'],
-    ['KeyC', 'c'],
-    ['KeyV', 'v'],
-    ['KeyB', 'b'],
-    ['KeyN', 'n'],
-    ['KeyM', 'm'],
-    ['Comma', ','],
-    ['Period', '.'],
-    ['Slash', '/'],
-  ],
-  // 中排
-  [
-    ['KeyA', 'a'],
-    ['KeyS', 's'],
-    ['KeyD', 'd'],
-    ['KeyF', 'f'],
-    ['KeyG', 'g'],
-    ['KeyH', 'h'],
-    ['KeyJ', 'j'],
-    ['KeyK', 'k'],
-    ['KeyL', 'l'],
-    ['Semicolon', ';'],
-    ['Quote', "'"],
-  ],
-  // 上排
-  [
-    ['KeyQ', 'q'],
-    ['KeyW', 'w'],
-    ['KeyE', 'e'],
-    ['KeyR', 'r'],
-    ['KeyT', 't'],
-    ['KeyY', 'y'],
-    ['KeyU', 'u'],
-    ['KeyI', 'i'],
-    ['KeyO', 'o'],
-    ['KeyP', 'p'],
-    ['BracketLeft', '['],
-    ['BracketRight', ']'],
-  ],
-  // 数字排 —— 最高
-  [
-    ['Digit1', '1'],
-    ['Digit2', '2'],
-    ['Digit3', '3'],
-    ['Digit4', '4'],
-    ['Digit5', '5'],
-    ['Digit6', '6'],
-    ['Digit7', '7'],
-    ['Digit8', '8'],
-    ['Digit9', '9'],
-    ['Digit0', '0'],
-  ],
-];
-
-/**
- * 「钢琴式」方案：两排键 = 一个八度。
- *
- * 下排字母是白键，上排字母正好落在下排的键缝上方 —— 空间关系和真实钢琴一致
- * （S 在 Z/X 缝隙、D 在 X/C 缝隙……），因此黑键不需要任何修饰键。
- * 每项：[KeyboardEvent.code, 键帽字符, 相对根音的半音偏移]。
- */
-interface OctaveKeys {
-  base: number;
-  whites: ReadonlyArray<readonly [string, string]>;
-  blacks: ReadonlyArray<readonly [string, string, number]>;
-}
-
+/** 白键相对根音的半音数：C D E F G A B */
 const WHITE_STEPS = [0, 2, 4, 5, 7, 9, 11] as const;
 
-const PIANO_OCTAVES: readonly OctaveKeys[] = [
+interface LayoutRow {
+  /** 段名，用于界面说明 */
+  label: string;
+  /** 相对起点升几个八度 */
+  octave: number;
+  /** 正好 7 个键，依次对应 C D E F G A B；用 code 而非 key，避免 Shift 改字符后匹配失败 */
+  keys: ReadonlyArray<readonly [code: string, char: string]>;
+}
+
+/**
+ * 默认布局：一排键 = 一个八度，只有白键（C 大调）。
+ *
+ * 左手下排、右手中排/上排，四排主键区加一排小键盘，正好覆盖 C2–B6 共五个八度。
+ * 每排从最左边那颗键起是 C，向右依次 D E F G A B —— 同一组白键在同一行相邻位置，
+ * 音阶走向与视线移动方向一致，不需要记「哪颗键对应哪个音」。
+ *
+ * 黑键（C♯ D♯ F♯ G♯ A♯）默认不绑：键盘上没有多余的位置，
+ * 硬塞进来只能靠 Shift 或占用别的行，反而破坏上面的空间关系。
+ * 需要时可在「键位」页自定义，或者用鼠标点琴键。
+ */
+const LAYOUT_ROWS: readonly LayoutRow[] = [
   {
-    base: PIANO_START_MIDI,
-    whites: [
+    label: '下排',
+    octave: 0,
+    keys: [
       ['KeyZ', 'z'],
       ['KeyX', 'x'],
       ['KeyC', 'c'],
@@ -97,17 +40,24 @@ const PIANO_OCTAVES: readonly OctaveKeys[] = [
       ['KeyN', 'n'],
       ['KeyM', 'm'],
     ],
-    blacks: [
-      ['KeyS', 's', 1],
-      ['KeyD', 'd', 3],
-      ['KeyG', 'g', 6],
-      ['KeyH', 'h', 8],
-      ['KeyJ', 'j', 10],
+  },
+  {
+    label: '中排',
+    octave: 1,
+    keys: [
+      ['KeyA', 'a'],
+      ['KeyS', 's'],
+      ['KeyD', 'd'],
+      ['KeyF', 'f'],
+      ['KeyG', 'g'],
+      ['KeyH', 'h'],
+      ['KeyJ', 'j'],
     ],
   },
   {
-    base: PIANO_START_MIDI + 12,
-    whites: [
+    label: '上排',
+    octave: 2,
+    keys: [
       ['KeyQ', 'q'],
       ['KeyW', 'w'],
       ['KeyE', 'e'],
@@ -116,56 +66,47 @@ const PIANO_OCTAVES: readonly OctaveKeys[] = [
       ['KeyY', 'y'],
       ['KeyU', 'u'],
     ],
-    blacks: [
-      ['Digit2', '2', 1],
-      ['Digit3', '3', 3],
-      ['Digit5', '5', 6],
-      ['Digit6', '6', 8],
-      ['Digit7', '7', 10],
+  },
+  {
+    label: '数字排',
+    octave: 3,
+    keys: [
+      ['Digit1', '1'],
+      ['Digit2', '2'],
+      ['Digit3', '3'],
+      ['Digit4', '4'],
+      ['Digit5', '5'],
+      ['Digit6', '6'],
+      ['Digit7', '7'],
+    ],
+  },
+  {
+    label: '小键盘',
+    octave: 4,
+    keys: [
+      ['Numpad7', '7'],
+      ['Numpad8', '8'],
+      ['Numpad9', '9'],
+      ['Numpad4', '4'],
+      ['Numpad5', '5'],
+      ['Numpad6', '6'],
+      ['Numpad1', '1'],
     ],
   },
 ];
 
-export type KeymapPresetId = 'piano' | 'wide';
-
-export interface KeymapPreset {
-  id: KeymapPresetId;
-  /** 全名，用在方案说明里 */
-  name: string;
-  /** 页签按钮上的短名 */
-  short: string;
-  /** 音域文案 */
+/** 界面上展示的布局摘要：一排一个八度（在文件末尾构造，依赖键帽字符工具） */
+export interface LayoutRowInfo {
+  label: string;
+  /** 键位串，如 `Z X C V B N M` */
+  keys: string;
+  /** 音域，如 `C2–B2` */
   range: string;
-  /** 一句话说明 */
-  desc: string;
-}
-
-export const KEYMAP_PRESETS: readonly KeymapPreset[] = [
-  {
-    id: 'piano',
-    name: '钢琴式：两排键一个八度',
-    short: '钢琴式',
-    range: 'C3–B4',
-    desc: '白键排在字母排、黑键落在上一排的键缝里，位置关系和琴键一致；不用修饰键，白键黑键能同时按。',
-  },
-  {
-    id: 'wide',
-    name: '宽音域：四排铺满 + Shift 黑键',
-    short: '宽音域',
-    range: 'C2–C8',
-    desc: '四排字母与数字键从低到高铺满 C2–C8；Shift 取左侧黑键、Alt 取右侧黑键。音域最大，但黑键要按住修饰键。',
-  },
-];
-
-export const DEFAULT_KEYMAP_PRESET: KeymapPresetId = 'piano';
-
-export function isKeymapPresetId(value: unknown): value is KeymapPresetId {
-  return value === 'piano' || value === 'wide';
 }
 
 /** 物理键 → 键帽字符。自定义绑定后，键帽上仍要显示这颗物理键的名字 */
 const CHAR_BY_CODE = new Map<string, string>(
-  WHITE_ROWS.flatMap((row) => row.map(([code, char]) => [code, char] as const)),
+  LAYOUT_ROWS.flatMap((row) => row.keys.map(([code, char]) => [code, char] as const)),
 );
 
 /** 小键盘：字符 + 是否需要在标签上区分出「这是小键盘」 */
@@ -221,9 +162,13 @@ const RESERVED_CODES = new Set([
   'ContextMenu',
 ]);
 
-/** 一条用户自定义绑定：物理键（含修饰键）→ 音高 */
+/**
+ * 一条用户改动：`code` 为字符串时是「绑定」，为 `null` 时是「空置」——
+ * 这个音不绑任何键（哪怕默认布局里有）。空置也属于需要持久化的改动，
+ * 否则「把这个音留空」一刷新就失效。
+ */
 export interface CustomBinding {
-  code: string;
+  code: string | null;
   modifier: KeyModifier;
   pitch: number;
 }
@@ -272,6 +217,16 @@ function displayLabel(char: string, modifier: KeyModifier, code: string): string
   return base;
 }
 
+/** 界面上展示的布局摘要：一排一个八度 */
+export const KEYMAP_ROWS: readonly LayoutRowInfo[] = LAYOUT_ROWS.map((row) => {
+  const base = BASE_START_MIDI + row.octave * 12;
+  return {
+    label: row.label,
+    keys: row.keys.map(([code, char]) => displayLabel(char, 'none', code)).join(' '),
+    range: `${midiToName(base)}–${midiToName(base + 11)}`,
+  };
+});
+
 /** 从键盘事件推导修饰键状态（Ctrl / Meta 组合不参与演奏） */
 export function modifierFromEvent(event: {
   shiftKey: boolean;
@@ -290,63 +245,23 @@ function binding(code: string, modifier: KeyModifier, pitch: number): KeyBinding
   return { code, modifier, pitch, char, label: displayLabel(char, modifier, code) };
 }
 
-/** 宽音域：四排白键由低到高铺开，Shift 取左侧黑键、Alt 取右侧黑键 */
-function buildWideBindings(startMidi: number): KeyBinding[] {
-  const totalKeys = WHITE_ROWS.reduce((sum, row) => sum + row.length, 0);
-  const pitches = whitePitchSequence(startMidi, totalKeys);
+/** 默认布局：每排一个八度的白键 */
+function buildDefaultBindings(startMidi: number): KeyBinding[] {
   const bindings: KeyBinding[] = [];
-
-  let index = 0;
-  for (const row of WHITE_ROWS) {
-    for (const [code, char] of row) {
-      const pitch = pitches[index];
-      index += 1;
-      if (pitch === undefined || pitch > MAX_MIDI) continue;
-
-      bindings.push({ code, modifier: 'none', pitch, char, label: displayLabel(char, 'none', code) });
-
-      if (hasBlackAbove(pitch) && pitch + 1 <= MAX_MIDI) {
-        bindings.push({
-          code,
-          modifier: 'shift',
-          pitch: pitch + 1,
-          char,
-          label: displayLabel(char, 'shift', code),
-        });
-      }
-      if (hasBlackBelow(pitch) && pitch - 1 >= MIN_MIDI) {
-        bindings.push({
-          code,
-          modifier: 'alt',
-          pitch: pitch - 1,
-          char,
-          label: displayLabel(char, 'alt', code),
-        });
-      }
-    }
-  }
-  return bindings;
-}
-
-/** 钢琴式：两排一组，白键在下排、黑键在上排键缝，全部无修饰键 */
-function buildPianoBindings(): KeyBinding[] {
-  const bindings: KeyBinding[] = [];
-  for (const octave of PIANO_OCTAVES) {
-    octave.whites.forEach(([code, char], index) => {
-      const pitch = octave.base + WHITE_STEPS[index];
+  for (const row of LAYOUT_ROWS) {
+    const base = startMidi + row.octave * 12;
+    row.keys.forEach(([code, char], index) => {
+      const pitch = base + WHITE_STEPS[index];
+      if (pitch > MAX_MIDI) return;
       bindings.push({ code, modifier: 'none', pitch, char, label: displayLabel(char, 'none', code) });
     });
-    for (const [code, char, step] of octave.blacks) {
-      const pitch = octave.base + step;
-      bindings.push({ code, modifier: 'none', pitch, char, label: displayLabel(char, 'none', code) });
-    }
   }
   return bindings;
 }
 
 /**
  * 解析一次按键：先按修饰键精确匹配；
- * 匹配不到时回落到无修饰版本 —— 钢琴式方案里根本没有 Shift 绑定，
+ * 匹配不到时回落到无修饰版本 —— 默认布局里没有 Shift 绑定，
  * 用户误按着 Shift 时不该直接没声音。
  */
 export function resolveBinding(
@@ -360,21 +275,19 @@ export function resolveBinding(
 }
 
 export interface KeyMapOptions {
-  preset?: KeymapPresetId;
-  /** 仅「宽音域」方案使用，默认 C2 */
+  /** 起点，默认 C2（36）；改它等于整体平移八度 */
   startMidi?: number;
+  /** 用户改动（绑定 + 空置），叠加在默认布局之上 */
   custom?: readonly CustomBinding[];
 }
 
 /**
  * 键盘映射表。
  *
- * 两套预设 + 用户自定义：
- * - `piano`：两排一个八度，白键在下排、黑键在上排键缝（默认，没有修饰键）；
- * - `wide`：四排铺满 C2–C8，Shift / Alt 取黑键（音域最大）。
- *
- * 自定义绑定叠加在预设之上 —— 同一个物理键（含修饰键）只保留一条，
- * 同一个音高也只保留一条，避免「按一个键出两个音」的歧义。
+ * 默认布局是「一排一个八度、只有白键」，布局细节见 `LAYOUT_ROWS`。
+ * 用户改动叠加其上：同一个物理键（含修饰键）只保留一条，同一个音高也只保留一条，
+ * 被「空置」的音高即使默认布局里有键位也会被移除 —— 避免出现「按一个键出两个音」或
+ * 「明明留空了却还能弹」的歧义。
  */
 export class PianoKeyMap {
   readonly bindings: KeyBinding[] = [];
@@ -382,38 +295,45 @@ export class PianoKeyMap {
   private readonly byCode = new Map<string, KeyBinding>();
   private readonly byPitch = new Map<number, KeyBinding[]>();
   private readonly byChar = new Map<string, KeyBinding>();
-  private readonly preset: KeymapPresetId;
   private readonly startMidi: number;
-  private readonly custom = new Map<string, number>();
+  private readonly customBinds = new Map<string, number>();
+  private readonly cleared = new Set<number>();
 
   constructor(options: KeyMapOptions = {}) {
-    this.preset = options.preset ?? DEFAULT_KEYMAP_PRESET;
-    this.startMidi = options.startMidi ?? (this.preset === 'wide' ? BASE_START_MIDI : PIANO_START_MIDI);
+    this.startMidi = options.startMidi ?? BASE_START_MIDI;
 
     for (const item of options.custom ?? []) {
-      if (!isBindableCode(item.code)) continue;
       if (!Number.isInteger(item.pitch) || item.pitch < MIN_MIDI || item.pitch > MAX_MIDI) continue;
-      this.custom.set(`${item.modifier}:${item.code}`, item.pitch);
+      if (item.code === null) {
+        this.cleared.add(item.pitch);
+        continue;
+      }
+      if (!isBindableCode(item.code)) continue;
+      this.customBinds.set(`${item.modifier}:${item.code}`, item.pitch);
     }
-    this.rebuild();
-  }
+    // 同一个音既「空置」又「绑定」时以绑定为准（用户最后一步是绑定）
+    for (const pitch of this.customBinds.values()) this.cleared.delete(pitch);
 
-  get presetId(): KeymapPresetId {
-    return this.preset;
+    this.rebuild();
   }
 
   get baseStartMidi(): number {
     return this.startMidi;
   }
 
-  /** 已自定义的条目数 */
+  /** 改动条目数（绑定 + 空置） */
   get customCount(): number {
-    return this.custom.size;
+    return this.customBinds.size + this.cleared.size;
   }
 
-  /** 被自定义覆盖的音高，用于界面上做标记 */
+  /** 被用户绑定过的音高，用于界面上做标记 */
   get customPitches(): ReadonlySet<number> {
-    return new Set(this.custom.values());
+    return new Set(this.customBinds.values());
+  }
+
+  /** 被空置的音高（不绑任何键） */
+  get clearedPitches(): ReadonlySet<number> {
+    return new Set(this.cleared);
   }
 
   /** 所有可演奏音高 */
@@ -429,12 +349,12 @@ export class PianoKeyMap {
     return this.byPitch.get(pitch) ?? [];
   }
 
-  /** 琴键上展示的按键标签（优先白键，其次 Shift 组合） */
+  /** 琴键上展示的按键标签；空置的音返回 undefined */
   labelFor(pitch: number): string | undefined {
     return this.preferredBinding(pitch)?.label;
   }
 
-  /** 琴键字符，黑键用于分行展示 */
+  /** 琴键字符，用于分行展示 */
   charFor(pitch: number): string | undefined {
     const binding = this.preferredBinding(pitch);
     if (!binding) return undefined;
@@ -469,28 +389,25 @@ export class PianoKeyMap {
     this.byPitch.clear();
     this.byChar.clear();
 
-    const blockedKeys = new Set(this.custom.keys());
+    const blockedKeys = new Set(this.customBinds.keys());
     // 白键被改到别的音上时，这颗键原来的 Shift / Alt 变体也一并作废，
-    // 否则「Q 变成 C4，但 ⇧Q 还留在 C#5」会让人莫名其妙
+    // 否则「Q 变成 C4，但 ⇧Q 还留在 C♯5」会让人莫名其妙
     const blockedCodes = new Set(
-      [...this.custom.keys()]
+      [...this.customBinds.keys()]
         .filter((key) => key.startsWith('none:'))
         .map((key) => key.slice('none:'.length)),
     );
-    const takenPitches = new Set(this.custom.values());
+    // 被绑定或被空置的音高，默认绑定都要让位
+    const takenPitches = new Set<number>([...this.customBinds.values(), ...this.cleared]);
 
-    const base =
-      this.preset === 'wide' ? buildWideBindings(this.startMidi) : buildPianoBindings();
-
-    for (const item of base) {
-      // 该物理键已被自定义占用，或该音高已被自定义绑定 → 预设绑定让位
+    for (const item of buildDefaultBindings(this.startMidi)) {
       if (blockedKeys.has(`${item.modifier}:${item.code}`)) continue;
       if (blockedCodes.has(item.code)) continue;
       if (takenPitches.has(item.pitch)) continue;
       this.register(item);
     }
 
-    for (const [key, pitch] of this.custom) {
+    for (const [key, pitch] of this.customBinds) {
       const separator = key.indexOf(':');
       const modifier = key.slice(0, separator) as KeyModifier;
       const code = key.slice(separator + 1);

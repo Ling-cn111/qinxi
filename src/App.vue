@@ -10,14 +10,11 @@ import {
   PianoKeyMap,
   resolveBinding,
   type CustomBinding,
-  type KeymapPresetId,
 } from '@/keyboard/keyMap';
 import {
   clearCustomBindings,
   loadCustomBindings,
-  loadKeymapPreset,
   saveCustomBindings,
-  saveKeymapPreset,
 } from '@/keyboard/customKeymap';
 import { midiToName } from '@/audio/note';
 import type { NoteLabelMode } from '@/keyboard/labels';
@@ -28,10 +25,9 @@ import type { DeckTab } from '@/types';
 const engine = new PianoEngine();
 
 const customBindings = ref<CustomBinding[]>(loadCustomBindings());
-const keymapPreset = ref<KeymapPresetId>(loadKeymapPreset());
 
 function createKeyMap(): PianoKeyMap {
-  return new PianoKeyMap({ preset: keymapPreset.value, custom: customBindings.value });
+  return new PianoKeyMap({ custom: customBindings.value });
 }
 
 const keyMap = shallowRef(createKeyMap());
@@ -147,11 +143,31 @@ function restoreSelected(): void {
   flash(`${midiToName(pitch)} 已恢复默认键位`);
 }
 
+/**
+ * 空置：这个音不绑任何键。
+ *
+ * 默认布局里它本来有键，所以要写一条「空置」记录压住默认绑定；
+ * 这条记录同样要落盘，否则刷新之后键位又回来了。
+ */
+function clearSelected(): void {
+  const pitch = editPitch.value;
+  if (pitch === null) return;
+  if (keyMap.value.clearedPitches.has(pitch) && keyMap.value.bindingsForPitch(pitch).length === 0) {
+    flash(`${midiToName(pitch)} 已经是空置状态`);
+    return;
+  }
+  const next = customBindings.value.filter((item) => item.pitch !== pitch);
+  next.push({ code: null, modifier: 'none', pitch });
+  applyCustomBindings(next);
+  flash(`${midiToName(pitch)} 已空置，不绑定任何键`);
+  editPitch.value = null;
+}
+
 function resetBindings(): void {
   clearCustomBindings();
   applyCustomBindings([]);
   editPitch.value = null;
-  flash('已恢复全部默认键位');
+  flash('已恢复全部默认键位，空置的音也一并恢复');
 }
 
 function pressPitch(pitch: number, velocity = 100): void {
@@ -194,8 +210,13 @@ function onKeyDown(event: KeyboardEvent): void {
     }
     if (editPitch.value === null) return;
     event.preventDefault();
-    if (event.code === 'Backspace' || event.code === 'Delete') {
+    if (event.code === 'Backspace') {
       restoreSelected();
+      return;
+    }
+    // Delete = 空置：这个音不绑任何键
+    if (event.code === 'Delete') {
+      clearSelected();
       return;
     }
     if (!isBindableCode(event.code)) return;
@@ -231,13 +252,6 @@ function onBlur(): void {
 
 watch(volume, (value) => {
   engine.setVolume(Math.min(1, Math.max(0, value / 100)));
-});
-
-// 换方案要重建映射表；自定义绑定原样保留
-watch(keymapPreset, (next) => {
-  saveKeymapPreset(next);
-  keyMap.value = createKeyMap();
-  editPitch.value = null;
 });
 
 onMounted(() => {
@@ -335,7 +349,6 @@ onBeforeUnmount(() => {
         v-model:volume="volume"
         v-model:diagram-mode="diagramMode"
         v-model:edit-mode="editMode"
-        v-model:preset="keymapPreset"
         :key-map="keyMap"
         :pressed="pressed"
         :edit-pitch="editPitch"
@@ -343,6 +356,7 @@ onBeforeUnmount(() => {
         :last-action="lastAction"
         @toggle-edit="toggleEdit"
         @restore="restoreSelected"
+        @clear="clearSelected"
         @reset="resetBindings"
       />
 

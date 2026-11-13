@@ -1,21 +1,21 @@
-import { DEFAULT_KEYMAP_PRESET, isKeymapPresetId, type CustomBinding, type KeymapPresetId } from './keyMap';
+import type { CustomBinding } from './keyMap';
 
 /**
  * 自定义键位的本地持久化。
- * 只存「用户改过的」那几条，默认键位仍由 `PianoKeyMap` 生成 ——
- * 这样以后调整默认布局时，老用户的自定义不会跟着错位。
+ * 只存「用户改过的」那几条（绑定 + 空置），默认布局仍由 `PianoKeyMap` 生成 ——
+ * 这样以后调整默认布局时，老用户的改动不会跟着错位。
  */
 const STORAGE_KEY = 'qinxi:keymap:v1';
-const PRESET_KEY = 'qinxi:keymap:preset:v1';
 
 const MODIFIERS = new Set(['none', 'shift', 'alt']);
 
 function isCustomBinding(value: unknown): value is CustomBinding {
   if (!value || typeof value !== 'object') return false;
-  const item = value as Partial<CustomBinding>;
+  const item = value as { code?: unknown; modifier?: unknown; pitch?: unknown };
+  // code === null 表示「空置」，是合法条目
+  const codeOk = item.code === null || (typeof item.code === 'string' && item.code.length > 0);
   return (
-    typeof item.code === 'string' &&
-    item.code.length > 0 &&
+    codeOk &&
     typeof item.modifier === 'string' &&
     MODIFIERS.has(item.modifier) &&
     typeof item.pitch === 'number' &&
@@ -61,28 +61,6 @@ export function clearCustomBindings(): void {
   if (!store) return;
   try {
     store.removeItem(STORAGE_KEY);
-  } catch {
-    /* 同上 */
-  }
-}
-
-/** 选中的键位方案也要记住，否则刷新后又跳回默认那套 */
-export function loadKeymapPreset(): KeymapPresetId {
-  const store = storage();
-  if (!store) return DEFAULT_KEYMAP_PRESET;
-  try {
-    const raw = store.getItem(PRESET_KEY);
-    return isKeymapPresetId(raw) ? raw : DEFAULT_KEYMAP_PRESET;
-  } catch {
-    return DEFAULT_KEYMAP_PRESET;
-  }
-}
-
-export function saveKeymapPreset(preset: KeymapPresetId): void {
-  const store = storage();
-  if (!store) return;
-  try {
-    store.setItem(PRESET_KEY, preset);
   } catch {
     /* 同上 */
   }

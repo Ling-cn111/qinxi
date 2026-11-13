@@ -26,11 +26,12 @@ describe('自定义键位持久化', () => {
     expect(() => clearCustomBindings()).not.toThrow();
   });
 
-  it('保存后能原样读回', () => {
+  it('保存后能原样读回（绑定与空置都存）', () => {
     vi.stubGlobal('localStorage', fakeStorage());
     const list = [
       { code: 'KeyG', modifier: 'none' as const, pitch: 60 },
       { code: 'Minus', modifier: 'shift' as const, pitch: 61 },
+      { code: null, modifier: 'none' as const, pitch: 62 },
     ];
     saveCustomBindings(list);
     expect(loadCustomBindings()).toEqual(list);
@@ -45,7 +46,7 @@ describe('自定义键位持久化', () => {
     expect(loadCustomBindings()).toEqual([]);
   });
 
-  it('过滤掉字段不合法的条目', () => {
+  it('过滤掉字段不合法的条目，但保留「空置」记录', () => {
     const store = fakeStorage();
     vi.stubGlobal('localStorage', store);
     store.setItem(
@@ -55,9 +56,13 @@ describe('自定义键位持久化', () => {
         { code: 'KeyH', modifier: 'hyper', pitch: 61 },
         { code: '', modifier: 'none', pitch: 62 },
         { code: 'KeyJ', modifier: 'none', pitch: '64' },
+        { code: null, modifier: 'none', pitch: 65 },
       ]),
     );
-    expect(loadCustomBindings()).toEqual([{ code: 'KeyG', modifier: 'none', pitch: 60 }]);
+    expect(loadCustomBindings()).toEqual([
+      { code: 'KeyG', modifier: 'none', pitch: 60 },
+      { code: null, modifier: 'none', pitch: 65 },
+    ]);
   });
 
   it('清除后读到空列表', () => {

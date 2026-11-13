@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   BLACK_HEIGHT_RATIO,
   buildKeyboardLayout,
@@ -56,10 +56,8 @@ const blackHint = (pitch: number) => splitHint(hintOf(pitch));
 const nameOf = (pitch: number) => noteLabelFor(pitch, props.noteMode);
 /** 八度配色：白键取深色版、黑键取浅色版 */
 const keyColor = (pitch: number, onBlack: boolean) => colorForPitch(pitch, onBlack);
-/** 顶盖提示：两套方案的按键习惯不同，别写死 ⇧ */
-const bandTip = computed(() =>
-  props.keyMap.presetId === 'wide' ? '⇧ 代表 shift 键' : '黑键在上一排键缝',
-);
+/** 顶盖提示：默认布局只有白键，黑键靠鼠标或自定义键位 */
+const bandTip = 'C 大调 · 仅白键';
 const pressedClass = (pitch: number) => props.pressed.has(pitch) ? 'is-pressed' : '';
 const targetClass = (pitch: number) =>
   props.editPitch === pitch ? 'is-target' : '';
