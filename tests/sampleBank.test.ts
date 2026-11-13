@@ -73,7 +73,7 @@ describe('SampleBank', () => {
     let calls = 0;
     const factory = (midi: number) => {
       calls += 1;
-      return fakeBuffer(`synth-${midi}`);
+      return { buffer: fakeBuffer(`synth-${midi}`), gain: 1.05 };
     };
 
     const first = bank.resolve(60, factory);
@@ -83,11 +83,29 @@ describe('SampleBank', () => {
     expect(second.anchorMidi).toBe(57);
     expect(second.ratio).toBeCloseTo(Math.pow(2, 5 / 12), 6);
     expect(bank.list()[0].source).toBe('synth');
+    expect(first.gain).toBeCloseTo(1.05, 6);
+    expect(first.gain).toBeCloseTo(1.05, 6);
+  });
+
+  it('归一化增益随锚点解析出来，未标注时为 1', () => {
+    const bank = new SampleBank();
+    bank.set({ midi: 60, buffer: fakeBuffer('C4'), gain: 2.4, source: 'autopiano' });
+    bank.set({ midi: 72, buffer: fakeBuffer('C5'), source: 'autopiano' });
+    expect(bank.find(60)?.gain).toBeCloseTo(2.4, 6);
+    expect(bank.find(72)?.gain).toBe(1);
+  });
+
+  it('归一化增益随锚点解析出来，未标注时为 1', () => {
+    const bank = new SampleBank();
+    bank.set({ midi: 60, buffer: fakeBuffer('C4'), gain: 2.4, source: 'autopiano' });
+    bank.set({ midi: 72, buffer: fakeBuffer('C5'), source: 'autopiano' });
+    expect(bank.find(60)?.gain).toBeCloseTo(2.4, 6);
+    expect(bank.find(72)?.gain).toBe(1);
   });
 
   it('prewarm 预渲染指定音区', () => {
     const bank = new SampleBank();
-    bank.prewarm((midi) => fakeBuffer(`s-${midi}`), [57, 69, 81]);
+    bank.prewarm((midi) => ({ buffer: fakeBuffer(`s-${midi}`), gain: 1 }), [57, 69, 81]);
     expect(bank.size).toBe(3);
     expect(bank.list().map((anchor) => anchor.midi)).toEqual([57, 69, 81]);
   });

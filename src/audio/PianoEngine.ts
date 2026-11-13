@@ -1,9 +1,18 @@
-import { nameToMidi, normalizeNoteParams, velocityToGain } from './note';
+import { nameToMidi, normalizeNoteParams } from './note';
 import { SampleBank } from './sampleBank';
 import { renderPianoTone } from './synth';
 import { AUTOPIANO_SAMPLE_DIR, AUTOPIANO_SAMPLES } from './autopianoSamples';
 import { NodePool } from './nodePool';
 import { createLegacyToneChain, type ToneChain } from './legacyTone';
+import { type SynthTone } from './sampleBank';
+import {
+  ATTACK_SECONDS,
+  BUS_BASE_GAIN,
+  busGainFor,
+  decaySecondsForPitch,
+  normalizedGainFor,
+  peakOf,
+} from './gain';
 
 export type EngineSource = 'none' | 'autopiano' | 'salamander' | 'synth';
 
@@ -63,9 +72,11 @@ interface SampleTask {
  */
 export class PianoEngine {
   private ctx: AudioContext | null = null;
-  private master: GainNode | null = null;
+  /** 复音总线：所有发声先汇到这里，再由总线统一限幅后进 destination */
+  private bus: GainNode | null = null;
   private limiter: DynamicsCompressorNode | null = null;
   private toneChain: ToneChain | null = null;
+  private volume = 1;
   private readonly bank = new SampleBank();
   private readonly gainPool: NodePool<GainNode>;
 
@@ -77,7 +88,6 @@ export class PianoEngine {
   private readonly sampleDir: string;
   private readonly fallbackSampleUrl: string;
   private readonly fallbackSampleNames: string[];
-  private readonly desiredVolume: number;
   private readonly maxPolyphony: number;
 
   status: EngineStatus = {
@@ -92,7 +102,7 @@ export class PianoEngine {
     this.sampleDir = options.sampleDir ?? `${import.meta.env.BASE_URL}${AUTOPIANO_SAMPLE_DIR}`;
     this.fallbackSampleUrl = options.fallbackSampleUrl ?? FALLBACK_SAMPLE_URL;
     this.fallbackSampleNames = options.fallbackSampleNames ?? FALLBACK_SAMPLE_NAMES;
-    this.desiredVolume = options.volume ?? 0.75;
+    this.volume = Math.min(1, Math.max(0, options.volume ?? 1));
     this.maxPolyphony = options.maxPolyphony ?? DEFAULT_MAX_POLYPHONY;
     this.gainPool = new NodePool<GainNode>(() => {
       const ctx = this.ctx;
@@ -148,7 +158,7 @@ export class PianoEngine {
       this.ctx = ctx;
       this.buildGraph(ctx);
       // 预渲染中央音区一个合成锚点（约 25ms），保证第一次按键不会沉默
-      this.bank.prewarm((midi) => renderPianoTone(ctx, midi), [69]);
+      this.bank.prewarm((midi) => this.synthTone(ctx, midi), [69]);
       ctx.onstatechange = () => this.syncState();
     }
 
@@ -167,29 +177,46 @@ export class PianoEngine {
   }
 
   private buildGraph(ctx: AudioContext): void {
-    const master = ctx.createGain();
-    master.gain.value = this.desiredVolume;
+    const bus = ctx.createGain();
+    bus.gain.value = BUS_BASE_GAIN * this.volume;
 
+    // 真峰值限制器：规格里的下压只在 >12 声部时生效，而实测 C4+E4+G4 的瞬时叠峰
+    // 已达 +1.48dBFS，仅靠总线下压挡不住 3 音和弦的削顶，这里补一级阈值 -1dB 的限制。
     const limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -8;
-    limiter.knee.value = 6;
-    limiter.ratio.value = 6;
-    limiter.attack.value = 0.003;
-    limiter.release.value = 0.25;
+    limiter.threshold.value = -1;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.12;
 
-    master.connect(limiter);
+    bus.connect(limiter);
     limiter.connect(ctx.destination);
-    this.master = master;
+    this.bus = bus;
     this.limiter = limiter;
   }
 
-  /** 启用降级染色：master → 低通 → 软削波 → limiter */
+  /** 总线增益 = 0.7 × 音量 × 复音下压系数（活跃 source > 12 时按比例降，最低 0.4） */
+  private applyBusGain(): void {
+    const bus = this.bus;
+    const ctx = this.ctx;
+    if (!bus || !ctx) return;
+    const active = this.voices.filter((voice) => !voice.released).length;
+    bus.gain.setTargetAtTime(busGainFor(active, this.volume), ctx.currentTime, 0.02);
+  }
+
+  /** 现场合成的兜底音，同时算出它的归一化增益 */
+  private synthTone(ctx: AudioContext, midi: number): SynthTone {
+    const buffer = renderPianoTone(ctx, midi);
+    return { buffer, gain: normalizedGainFor(peakOf([buffer.getChannelData(0)])) };
+  }
+
+  /** 启用降级染色：bus → 低通 → 软削波 → destination */
   private enableLegacyTone(ctx: AudioContext): void {
-    if (this.toneChain || !this.master || !this.limiter) return;
+    if (this.toneChain || !this.bus) return;
     const chain = createLegacyToneChain(ctx);
-    this.master.disconnect();
-    this.master.connect(chain.input);
-    chain.output.connect(this.limiter);
+    this.bus.disconnect();
+    this.bus.connect(chain.input);
+    chain.output.connect(this.limiter ?? ctx.destination);
     this.toneChain = chain;
   }
 
@@ -284,7 +311,12 @@ export class PianoEngine {
         cursor += 1;
         try {
           const buffer = await this.fetchBuffer(ctx, task.url);
-          this.bank.set({ midi: task.midi, buffer, source });
+          const channels = Array.from({ length: buffer.numberOfChannels }, (_, i) =>
+            buffer.getChannelData(i),
+          );
+          // 逐音归一化：峰值拉到 -1dBFS，解决不同音高录音电平不一致
+          const gain = normalizedGainFor(peakOf(channels));
+          this.bank.set({ midi: task.midi, buffer, gain, source });
           loaded += 1;
           this.patch({
             source,
@@ -352,10 +384,8 @@ export class PianoEngine {
   }
 
   setVolume(value: number): void {
-    const clamped = Math.min(1, Math.max(0, value));
-    if (this.master && this.ctx) {
-      this.master.gain.setTargetAtTime(clamped, this.ctx.currentTime, 0.01);
-    }
+    this.volume = Math.min(1, Math.max(0, value));
+    this.applyBusGain();
   }
 
   async dispose(): Promise<void> {
@@ -376,8 +406,8 @@ export class PianoEngine {
     durationSeconds?: number,
   ): void {
     const ctx = this.ctx;
-    const master = this.master;
-    if (!ctx || !master) return;
+    const bus = this.bus;
+    if (!ctx || !bus) return;
     // 任何一次发声都顺手尝试解锁音频上下文（自动播放策略要求用户手势）
     if (ctx.state !== 'running') this.resumeContext();
 
@@ -390,7 +420,7 @@ export class PianoEngine {
     }
     if (params.velocity === 0) return;
 
-    const sample = this.bank.resolve(params.pitch, (midi) => renderPianoTone(ctx, midi));
+    const sample = this.bank.resolve(params.pitch, (midi) => this.synthTone(ctx, midi));
 
     // 复音管理：超限时把最早的发声快速淡出，腾出节点
     if (this.voices.filter((v) => !v.released).length >= this.maxPolyphony) {
@@ -404,11 +434,16 @@ export class PianoEngine {
 
     const gain = this.gainPool.acquire();
     gain.gain.cancelScheduledValues(0);
-    gain.gain.setValueAtTime(0.0001, params.when);
-    gain.gain.linearRampToValueAtTime(velocityToGain(params.velocity), params.when + 0.004);
+
+    // 每个音一条独立包络：8ms 线性起音 → 指数衰减（常数随音区变化）
+    const peakGain = sample.gain * (params.velocity / 100);
+    const attackEnd = params.when + ATTACK_SECONDS;
+    gain.gain.setValueAtTime(0, params.when);
+    gain.gain.linearRampToValueAtTime(peakGain, attackEnd);
+    gain.gain.setTargetAtTime(0, attackEnd, decaySecondsForPitch(params.pitch));
 
     source.connect(gain);
-    gain.connect(master);
+    gain.connect(bus);
     source.start(params.when);
 
     const voice: Voice = {
@@ -424,7 +459,10 @@ export class PianoEngine {
       source.disconnect();
       this.gainPool.release(gain);
       this.voices = this.voices.filter((v) => v !== voice);
+      this.applyBusGain();
     };
+
+    this.applyBusGain();
 
     if (durationSeconds !== undefined && durationSeconds > 0) {
       this.releaseVoice(voice, params.when + durationSeconds);
