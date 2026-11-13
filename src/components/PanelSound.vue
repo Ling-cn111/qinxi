@@ -1,17 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { INSTRUMENTS } from '@/data/instruments';
 
 /**
- * 「声音」页：乐器列表 + 音量。
- * 乐器格子是给多音色预留的骨架，当前只有 AutoPiano 采样可用，
- * 其余条目标为待接入（点击无效），接入后只需改 `data/instruments.ts`。
+ * 「声音」页：只有主音量。
+ *
+ * 音色目录（原 28 条 GM 占位）已删掉 —— 当前只接了 AutoPiano 原版采样这一种音源，
+ * 摆一排点不动的音色没有意义。以后真接入多音色时，再按当时的采样重新设计这一页。
  */
-const instrument = defineModel<string>('instrument', { required: true });
 const volume = defineModel<number>('volume', { required: true });
 
-const availableCount = computed(() => INSTRUMENTS.filter((item) => item.available).length);
-const pendingCount = computed(() => INSTRUMENTS.length - availableCount.value);
 const volumeText = computed(() => (volume.value / 100).toFixed(2));
 const fillStyle = computed(() => ({ '--fill': `${volume.value}%` }));
 </script>
@@ -19,35 +16,8 @@ const fillStyle = computed(() => ({ '--fill': `${volume.value}%` }));
 <template>
   <section class="panel">
     <div class="panel-head">
-      <h3 class="panel-title"><span class="panel-title__num">1</span>乐器</h3>
-      <span class="panel-count">{{ INSTRUMENTS.length }} 种 · 已接入 {{ availableCount }}</span>
-    </div>
-
-    <div class="inst-grid">
-      <button
-        v-for="item in INSTRUMENTS"
-        :key="item.id"
-        type="button"
-        class="inst"
-        :class="{ 'is-active': item.id === instrument, 'is-locked': !item.available }"
-        :disabled="!item.available"
-        :aria-pressed="item.id === instrument"
-        @click="instrument = item.id"
-      >
-        <span class="inst__text">
-          <span class="inst__name">{{ item.name }}</span>
-          <span class="inst__latin">{{ item.latin }}</span>
-        </span>
-        <span v-if="item.badge" class="inst__badge">{{ item.badge }}</span>
-      </button>
-    </div>
-
-    <p class="panel-desc">
-      另外 {{ pendingCount }} 种音色为后续扩展预留，接入采样后即可在这里切换。
-    </p>
-
-    <div class="panel-head panel-head--gap">
-      <h3 class="panel-title"><span class="panel-title__num">2</span>音量</h3>
+      <h3 class="panel-title"><span class="panel-title__num">1</span>音量</h3>
+      <span class="panel-count">主输出 · 0–100</span>
     </div>
 
     <div class="volume">
@@ -88,6 +58,11 @@ const fillStyle = computed(() => ({ '--fill': `${volume.value}%` }));
       </svg>
       <span class="volume__value">{{ volumeText }}</span>
     </div>
+
+    <p class="panel-desc">
+      音源固定为 AutoPiano 原版单音采样（C2–C7 全半音 61 个 mp3），采样范围外靠移调补齐；
+      音量同时作用于总线，与顶栏滑块是同一个值。
+    </p>
   </section>
 </template>
 
@@ -99,103 +74,11 @@ const fillStyle = computed(() => ({ '--fill': `${volume.value}%` }));
   gap: 16px;
 }
 
-.panel-head--gap {
-  margin-top: 26px;
-}
-
 .panel-count {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11px;
   letter-spacing: 0.06em;
-  color: rgba(231, 227, 220, 0.34);
-}
-
-.inst-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
-  gap: 10px;
-}
-
-.inst {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 54px;
-  padding: 9px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
-  background: #202020;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 120ms ease,
-    background 120ms ease,
-    color 120ms ease;
-}
-
-.inst:hover:not(:disabled) {
-  border-color: rgba(207, 164, 106, 0.42);
-  background: #242424;
-}
-
-.inst.is-active {
-  border-color: rgba(207, 164, 106, 0.62);
-  background: #241b12;
-  box-shadow: inset 3px 0 0 #cfa46a;
-}
-
-.inst.is-locked {
-  cursor: not-allowed;
-  background: #1c1c1c;
-}
-
-.inst__text {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.inst__name {
-  font-size: 13px;
-  line-height: 1.1;
-  color: rgba(231, 227, 220, 0.88);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.inst__latin {
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 10px;
-  line-height: 1.1;
-  letter-spacing: 0.02em;
-  color: rgba(231, 227, 220, 0.3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.inst.is-locked .inst__name {
-  color: rgba(231, 227, 220, 0.46);
-}
-
-.inst.is-active .inst__name {
-  color: #e5c79a;
-}
-
-.inst__badge {
-  flex: 0 0 auto;
-  padding: 2px 5px;
-  border: 1px solid rgba(207, 164, 106, 0.4);
-  border-radius: 2px;
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  color: #cfa46a;
+  color: rgba(var(--qin-ink-rgb), 0.34);
 }
 
 /* ------------------------------------------------------------------ 音量 */
@@ -204,7 +87,7 @@ const fillStyle = computed(() => ({ '--fill': `${volume.value}%` }));
   align-items: center;
   gap: 14px;
   max-width: 520px;
-  color: rgba(231, 227, 220, 0.5);
+  color: rgba(var(--qin-ink-rgb), 0.5);
 }
 
 .volume__icon {
@@ -221,17 +104,7 @@ const fillStyle = computed(() => ({ '--fill': `${volume.value}%` }));
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11.5px;
   letter-spacing: 0.04em;
-  color: rgba(231, 227, 220, 0.42);
-}
-
-.volume__value {
-  flex: 0 0 auto;
-  width: 34px;
-  text-align: right;
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 11.5px;
-  letter-spacing: 0.04em;
-  color: rgba(231, 227, 220, 0.42);
+  color: rgba(var(--qin-ink-rgb), 0.42);
 }
 
 .volume__range {
@@ -247,10 +120,10 @@ const fillStyle = computed(() => ({ '--fill': `${volume.value}%` }));
   border-radius: 2px;
   background: linear-gradient(
     to right,
-    #b98d55 0,
-    #b98d55 var(--fill),
-    rgba(255, 255, 255, 0.14) var(--fill),
-    rgba(255, 255, 255, 0.14) 100%
+    var(--qin-accent-dim) 0,
+    var(--qin-accent-dim) var(--fill),
+    rgba(var(--qin-w-rgb), 0.14) var(--fill),
+    rgba(var(--qin-w-rgb), 0.14) 100%
   );
 }
 
@@ -260,20 +133,20 @@ const fillStyle = computed(() => ({ '--fill': `${volume.value}%` }));
   height: 12px;
   margin-top: -4.5px;
   border-radius: 50%;
-  background: #e7e3dc;
+  background: rgb(var(--qin-ink-rgb));
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 
 .volume__range::-moz-range-track {
   height: 3px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(var(--qin-w-rgb), 0.14);
 }
 
 .volume__range::-moz-range-progress {
   height: 3px;
   border-radius: 2px;
-  background: #b98d55;
+  background: var(--qin-accent-dim);
 }
 
 .volume__range::-moz-range-thumb {
@@ -281,6 +154,6 @@ const fillStyle = computed(() => ({ '--fill': `${volume.value}%` }));
   height: 12px;
   border: 0;
   border-radius: 50%;
-  background: #e7e3dc;
+  background: rgb(var(--qin-ink-rgb));
 }
 </style>

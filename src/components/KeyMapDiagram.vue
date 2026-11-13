@@ -225,8 +225,8 @@ const padStyle = (key: PadKey) => ({
   align-items: stretch;
   gap: 14px;
   padding: 16px;
-  background: #1b1b1b;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--qin-surface-2);
+  border: 1px solid rgba(var(--qin-w-rgb), 0.07);
 }
 
 .kbd__main {
@@ -255,12 +255,12 @@ const padStyle = (key: PadKey) => ({
   background: #2b2b2b;
   box-shadow:
     inset 0 -2px 0 rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(var(--qin-w-rgb), 0.04),
     0 1px 0 rgba(0, 0, 0, 0.5);
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11.5px;
   letter-spacing: 0.02em;
-  color: rgba(231, 227, 220, 0.32);
+  color: rgba(var(--qin-ink-rgb), 0.32);
   overflow: hidden;
   transition:
     background 90ms linear,
@@ -276,16 +276,16 @@ const padStyle = (key: PadKey) => ({
 .cap--custom {
   box-shadow:
     inset 0 -2px 0 rgba(0, 0, 0, 0.55),
-    inset 0 -1px 0 rgba(207, 164, 106, 0.7),
+    inset 0 -1px 0 rgba(var(--qin-accent-rgb), 0.7),
     0 1px 0 rgba(0, 0, 0, 0.5);
 }
 
 .cap.is-down {
-  background: #b98d55;
+  background: var(--qin-accent-dim);
   color: #1a1a1a;
   box-shadow:
     inset 0 2px 0 rgba(0, 0, 0, 0.35),
-    0 0 0 1px rgba(255, 255, 255, 0.1);
+    0 0 0 1px rgba(var(--qin-w-rgb), 0.1);
 }
 
 /* ---------------------------------------------------------------- 小键盘 */
@@ -296,7 +296,7 @@ const padStyle = (key: PadKey) => ({
   grid-template-rows: repeat(5, 1fr);
   gap: 6px;
   padding-left: 14px;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 1px solid rgba(var(--qin-w-rgb), 0.06);
 }
 
 .cap--pad {
@@ -319,7 +319,7 @@ const padStyle = (key: PadKey) => ({
     padding-left: 0;
     padding-top: 10px;
     border-left: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid rgba(var(--qin-w-rgb), 0.06);
   }
 
   .cap {

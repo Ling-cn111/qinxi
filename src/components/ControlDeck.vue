@@ -2,10 +2,8 @@
 import PanelDisplay from './PanelDisplay.vue';
 import PanelKeymap from './PanelKeymap.vue';
 import PanelSound from './PanelSound.vue';
-import { computed } from 'vue';
 import type { PianoKeyMap } from '@/keyboard/keyMap';
 import type { KeymapScheme } from '@/keyboard/keymapSchemes';
-import { findInstrument } from '@/data/instruments';
 import type { DeckTab } from '@/types';
 
 /**
@@ -36,14 +34,9 @@ const tab = defineModel<DeckTab>('tab', { required: true });
 const showHints = defineModel<boolean>('showHints', { required: true });
 const noteNames = defineModel<boolean>('noteNames', { required: true });
 const solfege = defineModel<boolean>('solfege', { required: true });
-const instrument = defineModel<string>('instrument', { required: true });
 const volume = defineModel<number>('volume', { required: true });
 const diagramMode = defineModel<'char' | 'note'>('diagramMode', { required: true });
 const editMode = defineModel<boolean>('editMode', { required: true });
-
-const activeInstrument = computed(
-  () => findInstrument(instrument.value)?.name ?? '未选择',
-);
 
 const TABS = [
   { id: 'display', label: '显示' },
@@ -96,7 +89,6 @@ const TABS = [
         <span class="deck__label">{{ item.label }}</span>
       </button>
 
-      <span class="deck__now">音色 · {{ activeInstrument }}</span>
     </div>
 
     <div class="deck__body">
@@ -108,7 +100,6 @@ const TABS = [
       />
       <PanelSound
         v-else-if="tab === 'sound'"
-        v-model:instrument="instrument"
         v-model:volume="volume"
       />
       <PanelKeymap
@@ -138,8 +129,8 @@ const TABS = [
 .deck {
   width: 90%;
   margin: 0 auto;
-  background: #171717;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--qin-surface);
+  border: 1px solid rgba(var(--qin-w-rgb), 0.07);
   border-top: 0;
 }
 
@@ -147,7 +138,7 @@ const TABS = [
   display: flex;
   align-items: stretch;
   gap: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: 1px solid rgba(var(--qin-w-rgb), 0.07);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -168,7 +159,7 @@ const TABS = [
   border: 0;
   border-top: 2px solid transparent;
   background: transparent;
-  color: rgba(231, 227, 220, 0.38);
+  color: rgba(var(--qin-ink-rgb), 0.38);
   font-family: inherit;
   cursor: pointer;
   transition:
@@ -178,14 +169,14 @@ const TABS = [
 }
 
 .deck__tab:hover {
-  color: rgba(231, 227, 220, 0.72);
-  background: rgba(255, 255, 255, 0.02);
+  color: rgba(var(--qin-ink-rgb), 0.72);
+  background: rgba(var(--qin-w-rgb), 0.02);
 }
 
 .deck__tab.is-active {
-  color: #e5c79a;
-  background: #221a12;
-  border-top-color: #cfa46a;
+  color: var(--qin-accent-strong);
+  background: var(--qin-surface-tab);
+  border-top-color: var(--qin-accent);
 }
 
 .deck__icon {
@@ -200,16 +191,6 @@ const TABS = [
   line-height: 1;
 }
 
-.deck__now {
-  margin-left: auto;
-  align-self: center;
-  padding: 0 20px;
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: rgba(231, 227, 220, 0.3);
-  white-space: nowrap;
-}
 
 .deck__body {
   padding: 22px 24px 26px;
@@ -223,10 +204,6 @@ const TABS = [
   .deck__tab {
     min-width: 78px;
     padding: 9px 12px 8px;
-  }
-
-  .deck__now {
-    display: none;
   }
 
   .deck__body {

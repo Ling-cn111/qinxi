@@ -24,14 +24,14 @@ const model = defineModel<boolean>({ required: true });
   align-items: center;
   gap: 9px;
   font-size: 13px;
-  color: rgba(231, 227, 220, 0.72);
+  color: rgba(var(--qin-ink-rgb), 0.72);
   cursor: pointer;
   user-select: none;
 }
 
 .switch.is-disabled {
   cursor: not-allowed;
-  color: rgba(231, 227, 220, 0.28);
+  color: rgba(var(--qin-ink-rgb), 0.28);
 }
 
 .switch input {
@@ -49,7 +49,7 @@ const model = defineModel<boolean>({ required: true });
   padding: 2px;
   border-radius: 9px;
   background: #333;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(var(--qin-w-rgb), 0.08);
   transition: background 140ms ease, box-shadow 140ms ease;
 }
 
@@ -64,8 +64,8 @@ const model = defineModel<boolean>({ required: true });
 }
 
 .switch.is-on .switch__track {
-  background: #b98d55;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  background: var(--qin-accent-dim);
+  box-shadow: inset 0 0 0 1px rgba(var(--qin-w-rgb), 0.14);
 }
 
 .switch.is-on .switch__thumb {
@@ -74,7 +74,7 @@ const model = defineModel<boolean>({ required: true });
 }
 
 .switch input:focus-visible + .switch__track {
-  outline: 1px solid rgba(207, 164, 106, 0.75);
+  outline: 1px solid rgba(var(--qin-accent-rgb), 0.75);
   outline-offset: 2px;
 }
 </style>

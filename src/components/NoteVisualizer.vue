@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { MAX_MIDI, MIN_MIDI } from '@/audio/note';
+import { themeId } from '@/theme/useTheme';
 
 /**
  * 钢琴上方的音符可视化。
@@ -12,6 +13,27 @@ import { MAX_MIDI, MIN_MIDI } from '@/audio/note';
  * 只在有活跃音符时跑 requestAnimationFrame，松手安静后自动停下。
  */
 const canvasRef = ref<HTMLCanvasElement | null>(null);
+
+/**
+ * 柱子的三段颜色跟着外观主题走：从 `<html>` 上读主题变量（见 src/theme/themes.ts），
+ * 切主题时重读一次就够了，不必每帧都查 computedStyle。
+ */
+const palette = {
+  top: '255, 233, 200',
+  mid: '224, 160, 90',
+  bottom: '126, 70, 26',
+  accent: '207, 164, 106',
+};
+
+function readPalette(): void {
+  if (typeof window === 'undefined') return;
+  const styles = window.getComputedStyle(document.documentElement);
+  const pick = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  palette.top = pick('--qin-viz-top-rgb', palette.top);
+  palette.mid = pick('--qin-viz-mid-rgb', palette.mid);
+  palette.bottom = pick('--qin-viz-bottom-rgb', palette.bottom);
+  palette.accent = pick('--qin-accent-rgb', palette.accent);
+}
 
 const CAPACITY = MAX_MIDI + 1;
 const levels = new Float32Array(CAPACITY);
@@ -31,9 +53,9 @@ let height = 0;
  */
 function barGradient(context: CanvasRenderingContext2D, top: number, level: number): CanvasGradient {
   const next = context.createLinearGradient(0, top, 0, height);
-  next.addColorStop(0, `rgba(255, 233, 200, ${0.55 + 0.45 * level})`);
-  next.addColorStop(0.5, `rgba(224, 160, 90, ${0.45 + 0.4 * level})`);
-  next.addColorStop(1, 'rgba(126, 70, 26, 0.72)');
+  next.addColorStop(0, `rgba(${palette.top}, ${0.55 + 0.45 * level})`);
+  next.addColorStop(0.5, `rgba(${palette.mid}, ${0.45 + 0.4 * level})`);
+  next.addColorStop(1, `rgba(${palette.bottom}, 0.72)`);
   return next;
 }
 
@@ -42,7 +64,7 @@ function draw(): void {
   ctx.clearRect(0, 0, width, height);
 
   // 一条极淡的基线，空闲时这块区域也不会显得"坏掉了"
-  ctx.fillStyle = 'rgba(207, 164, 106, 0.2)';
+  ctx.fillStyle = `rgba(${palette.accent}, 0.2)`;
   ctx.fillRect(0, height - 1, width, 1);
 
   const span = MAX_MIDI - MIN_MIDI + 1;
@@ -135,7 +157,13 @@ function resize(): void {
   draw();
 }
 
+watch(themeId, () => {
+  readPalette();
+  draw();
+});
+
 onMounted(() => {
+  readPalette();
   resize();
   if (typeof ResizeObserver !== 'undefined') {
     observer = new ResizeObserver(() => resize());
