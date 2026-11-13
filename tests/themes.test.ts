@@ -138,19 +138,19 @@ describe('主题应用与持久化', () => {
 
   it('保存后能读回；存了不认识的 id 则回落默认', () => {
     vi.stubGlobal('localStorage', fakeStorage());
-    saveThemeId('ink');
-    expect(loadThemeId()).toBe('ink');
+    saveThemeId('china');
+    expect(loadThemeId()).toBe('china');
     localStorage.setItem(THEME_STORAGE_KEY, 'nope');
     expect(loadThemeId()).toBe(DEFAULT_THEME_ID);
   });
 
   it('setTheme 切换单例、落盘并生效；同名重复调用是空操作', () => {
     vi.stubGlobal('localStorage', fakeStorage());
-    setTheme('ink');
-    expect(themeId.value).toBe('ink');
-    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('ink');
-    expect(() => setTheme('ink')).not.toThrow();
+    setTheme('china');
+    expect(themeId.value).toBe('china');
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('china');
+    expect(() => setTheme('china')).not.toThrow();
     setTheme('not-a-theme');
-    expect(themeId.value).toBe('ink');
+    expect(themeId.value).toBe('china');
   });
 });

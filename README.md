@@ -10,7 +10,7 @@
 - 深色界面，尺寸/配色严格对齐 AutoPiano：黑漆顶盖、`.wkey` / `.bkey` 的渐变色与边框均取自其源码
 - 钢琴上方是**音符频谱**：按下即跳出柱子（含泛音），松手按指数衰减
 - 钢琴下方是**三页签控制台**：显示（键面标注）、声音（音量）、键位（C 大调布局 + 自定义 / 空置 + 映射图）
-- 三套**外观主题**（舞台 / 赛博 / 水墨），右上角下拉切换并记住选择；只换背景与外壳，琴体不变
+- 三套**外观主题**（舞台 / 赛博 / 中国红），右上角下拉切换并记住选择；只换背景与外壳，琴体不变
 
 > 参考项目：[AutoPiano 自由钢琴](https://www.autopiano.cn/)（[Wscats/piano](https://github.com/Wscats/piano)）。
 > 本仓库仅参考其 **CSS 钢琴布局思路** 与 **社区键盘谱的键位映射约定**，代码用 Vue 3 + TypeScript 全部重写，
@@ -126,7 +126,7 @@ docs/screenshots/  界面截图（PR 用）
 | --- | --- | --- | --- |
 | 舞台 `stage` | `#1a1a1a` | 暖木 `#cfa46a` | 顶部一束暖光（默认，与 AutoPiano 原站一致） |
 | 赛博 `cyber` | `#06070d` | 霓虹青 `#38e8ff` | 46px 网格 + 3px 扫描线 + 青/品红/紫三处光斑 |
-| 水墨 `ink` | `#121516` | 朱砂 `#c8503f` | 45° 菱格窗棂 + 6px 宣纸纤维 + 底部薄雾与远山 |
+| 中国红 `china` | `#220c0a` | 红 `#e0402f` + 金 `#ffc65c` | 45° 金线窗棂 + 宣纸纤维 + 顶部红晕与底部灯影 |
 
 **只换壳，不换琴**：`PianoKeyboard.vue` 里的顶盖黑漆、黑白琴键渐变、键床 `#222` 全是硬编码的 AutoPiano 原值，
 不吃主题变量；主题只管页面底色、顶栏、控制栏、控制台面板、面板内控件、以及音符柱的三段渐变。
@@ -143,9 +143,9 @@ docs/screenshots/  界面截图（PR 用）
 
 加一套新主题：往 `THEMES` 里加一个对象（字段一个都不能少），再同步 `style.css` 的 `:root`，不用动任何组件。
 
-| 舞台 | 赛博 | 水墨 |
+| 舞台 | 赛博 | 中国红 |
 | --- | --- | --- |
-| ![舞台](docs/screenshots/theme-stage.png) | ![赛博](docs/screenshots/theme-cyber.png) | ![水墨](docs/screenshots/theme-ink.png) |
+| ![舞台](docs/screenshots/theme-stage.png) | ![赛博](docs/screenshots/theme-cyber.png) | ![中国红](docs/screenshots/theme-china.png) |
 
 ## 音符频谱（钢琴上方）
 
