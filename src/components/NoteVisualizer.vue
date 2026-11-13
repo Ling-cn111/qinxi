@@ -41,6 +41,10 @@ function draw(): void {
   if (!ctx || width === 0) return;
   ctx.clearRect(0, 0, width, height);
 
+  // 一条极淡的基线，空闲时这块区域也不会显得"坏掉了"
+  ctx.fillStyle = 'rgba(207, 164, 106, 0.2)';
+  ctx.fillRect(0, height - 1, width, 1);
+
   const span = MAX_MIDI - MIN_MIDI + 1;
   const cell = width / span;
   const barWidth = Math.max(3, Math.min(10, cell * 0.62));
@@ -160,9 +164,11 @@ defineExpose({ trigger });
 <style scoped>
 .viz {
   width: 90%;
-  height: 116px;
-  margin: 14px auto -14px;
+  height: 96px;
+  margin: 12px auto -12px;
   pointer-events: none;
+  /* 一层几乎看不出来的暗底，让这块区域像"频谱屏"而不是空隙 */
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.34));
   /* 顶部渐隐，柱子冲到顶端不会撞出一条硬边 */
   mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 62%, rgba(0, 0, 0, 0) 100%);
   -webkit-mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 62%, rgba(0, 0, 0, 0) 100%);
