@@ -1,113 +1,98 @@
 import { MAX_MIDI, MIN_MIDI, midiToName, WHITE_PITCH_CLASSES } from '@/audio/note';
 import type { KeyBinding, KeyModifier } from '@/types';
 
-/** 默认布局的起点：C2。每往上一排升一个八度。 */
+/** 默认布局的起点：C2 */
 export const BASE_START_MIDI = 36;
-
-/** 白键相对根音的半音数：C D E F G A B */
-const WHITE_STEPS = [0, 2, 4, 5, 7, 9, 11] as const;
 
 interface LayoutRow {
   /** 段名，用于界面说明 */
   label: string;
-  /** 相对起点升几个八度 */
-  octave: number;
-  /** 正好 7 个键，依次对应 C D E F G A B；用 code 而非 key，避免 Shift 改字符后匹配失败 */
-  keys: ReadonlyArray<readonly [code: string, char: string]>;
+  /** [KeyboardEvent.code, 音高]，按从左到右的顺序；未列出的键不绑音 */
+  keys: ReadonlyArray<readonly [code: string, pitch: number]>;
 }
 
 /**
- * 默认布局：一排键 = 一个八度，只有白键（C 大调）。
+ * 默认布局：照给定的键位表原样排，只有白键（C 大调），黑键留空。
  *
- * 左手下排、右手中排/上排，四排主键区加一排小键盘，正好覆盖 C2–B6 共五个八度。
- * 每排从最左边那颗键起是 C，向右依次 D E F G A B —— 同一组白键在同一行相邻位置，
- * 音阶走向与视线移动方向一致，不需要记「哪颗键对应哪个音」。
+ * 音域正好覆盖 C2–C7 的 36 个白键，但在键面上是「折行」铺开的：
+ * 下排 C2–B2 → 上排 Q–T 是 C3–G3 → 中排接着 A3–B4 → 上排 Y–] 是 C5–B5 →
+ * 数字排 5–= 是 C6–C7。所以相邻两排的音高是交错的（按 D 比按 T 高），
+ * 这是这套键位表本身的排法，不是 bug。
  *
- * 黑键（C♯ D♯ F♯ G♯ A♯）默认不绑：键盘上没有多余的位置，
- * 硬塞进来只能靠 Shift 或占用别的行，反而破坏上面的空间关系。
- * 需要时可在「键位」页自定义，或者用鼠标点琴键。
+ * 黑键（C♯ D♯ F♯ G♯ A♯）一个都不绑：`S`、`2`、`3` 原来标着 C♯3 / C♯4 / D♯4，
+ * 按需求删掉了，这些键现在是空闲的。
  */
 const LAYOUT_ROWS: readonly LayoutRow[] = [
   {
     label: '下排',
-    octave: 0,
     keys: [
-      ['KeyZ', 'z'],
-      ['KeyX', 'x'],
-      ['KeyC', 'c'],
-      ['KeyV', 'v'],
-      ['KeyB', 'b'],
-      ['KeyN', 'n'],
-      ['KeyM', 'm'],
+      ['KeyZ', 36], // C2
+      ['KeyX', 38],
+      ['KeyC', 40],
+      ['KeyV', 41],
+      ['KeyB', 43],
+      ['KeyN', 45],
+      ['KeyM', 47], // B2
     ],
   },
   {
     label: '中排',
-    octave: 1,
     keys: [
-      ['KeyA', 'a'],
-      ['KeyS', 's'],
-      ['KeyD', 'd'],
-      ['KeyF', 'f'],
-      ['KeyG', 'g'],
-      ['KeyH', 'h'],
-      ['KeyJ', 'j'],
+      ['KeyD', 57], // A3
+      ['KeyF', 59],
+      ['KeyG', 60], // C4
+      ['KeyH', 62],
+      ['KeyJ', 64],
+      ['KeyK', 65],
+      ['KeyL', 67],
+      ['Semicolon', 69],
+      ['Quote', 71], // B4
     ],
   },
   {
     label: '上排',
-    octave: 2,
     keys: [
-      ['KeyQ', 'q'],
-      ['KeyW', 'w'],
-      ['KeyE', 'e'],
-      ['KeyR', 'r'],
-      ['KeyT', 't'],
-      ['KeyY', 'y'],
-      ['KeyU', 'u'],
+      ['KeyQ', 48], // C3
+      ['KeyW', 50],
+      ['KeyE', 52],
+      ['KeyR', 53],
+      ['KeyT', 55], // G3
+      ['KeyY', 72], // C5
+      ['KeyU', 74],
+      ['KeyI', 76],
+      ['KeyO', 77],
+      ['KeyP', 79],
+      ['BracketLeft', 81],
+      ['BracketRight', 83], // B5
     ],
   },
   {
     label: '数字排',
-    octave: 3,
     keys: [
-      ['Digit1', '1'],
-      ['Digit2', '2'],
-      ['Digit3', '3'],
-      ['Digit4', '4'],
-      ['Digit5', '5'],
-      ['Digit6', '6'],
-      ['Digit7', '7'],
+      ['Digit5', 84], // C6
+      ['Digit6', 86],
+      ['Digit7', 88],
+      ['Digit8', 89],
+      ['Digit9', 91],
+      ['Digit0', 93],
+      ['Minus', 95],
+      ['Equal', 96], // C7
     ],
   },
   {
     label: '小键盘',
-    octave: 4,
-    keys: [
-      ['Numpad7', '7'],
-      ['Numpad8', '8'],
-      ['Numpad9', '9'],
-      ['Numpad4', '4'],
-      ['Numpad5', '5'],
-      ['Numpad6', '6'],
-      ['Numpad1', '1'],
-    ],
+    keys: [],
   },
 ];
 
-/** 界面上展示的布局摘要：一排一个八度（在文件末尾构造，依赖键帽字符工具） */
+/** 界面上展示的布局摘要：每排的「键 + 音」对照 */
 export interface LayoutRowInfo {
   label: string;
-  /** 键位串，如 `Z X C V B N M` */
+  /** 键与音成对，如 `Z C2 · X D2` */
   keys: string;
-  /** 音域，如 `C2–B2` */
+  /** 这一排的音域跨度，如 `C2–B2`；空排为 `—` */
   range: string;
 }
-
-/** 物理键 → 键帽字符。自定义绑定后，键帽上仍要显示这颗物理键的名字 */
-const CHAR_BY_CODE = new Map<string, string>(
-  LAYOUT_ROWS.flatMap((row) => row.keys.map(([code, char]) => [code, char] as const)),
-);
 
 /** 小键盘：字符 + 是否需要在标签上区分出「这是小键盘」 */
 const NUMPAD_CHARS: Record<string, string> = {
@@ -185,8 +170,6 @@ export function isNumpadCode(code: string): boolean {
 export function charForCode(code: string): string {
   const numpad = NUMPAD_CHARS[code];
   if (numpad) return numpad;
-  const known = CHAR_BY_CODE.get(code);
-  if (known) return known;
   if (code.startsWith('Key')) return code.slice(3).toLowerCase();
   if (code.startsWith('Digit')) return code.slice(5);
   return PUNCT_CHARS[code] ?? code.toLowerCase();
@@ -217,13 +200,18 @@ function displayLabel(char: string, modifier: KeyModifier, code: string): string
   return base;
 }
 
-/** 界面上展示的布局摘要：一排一个八度 */
+/** 界面上展示的布局摘要：每排「键 + 音」逐颗列出 */
 export const KEYMAP_ROWS: readonly LayoutRowInfo[] = LAYOUT_ROWS.map((row) => {
-  const base = BASE_START_MIDI + row.octave * 12;
+  if (row.keys.length === 0) {
+    return { label: row.label, keys: '空闲（可自定义）', range: '—' };
+  }
+  const pitches = row.keys.map(([, pitch]) => pitch);
   return {
     label: row.label,
-    keys: row.keys.map(([code, char]) => displayLabel(char, 'none', code)).join(' '),
-    range: `${midiToName(base)}–${midiToName(base + 11)}`,
+    keys: row.keys
+      .map(([code, pitch]) => `${displayLabel(charForCode(code), 'none', code)} ${midiToName(pitch)}`)
+      .join(' · '),
+    range: `${midiToName(Math.min(...pitches))}–${midiToName(Math.max(...pitches))}`,
   };
 });
 
@@ -245,16 +233,16 @@ function binding(code: string, modifier: KeyModifier, pitch: number): KeyBinding
   return { code, modifier, pitch, char, label: displayLabel(char, modifier, code) };
 }
 
-/** 默认布局：每排一个八度的白键 */
+/** 默认布局：按 LAYOUT_ROWS 逐颗绑定；startMidi 可整体平移八度 */
 function buildDefaultBindings(startMidi: number): KeyBinding[] {
+  const shift = startMidi - BASE_START_MIDI;
   const bindings: KeyBinding[] = [];
   for (const row of LAYOUT_ROWS) {
-    const base = startMidi + row.octave * 12;
-    row.keys.forEach(([code, char], index) => {
-      const pitch = base + WHITE_STEPS[index];
-      if (pitch > MAX_MIDI) return;
-      bindings.push({ code, modifier: 'none', pitch, char, label: displayLabel(char, 'none', code) });
-    });
+    for (const [code, base] of row.keys) {
+      const pitch = base + shift;
+      if (pitch < MIN_MIDI || pitch > MAX_MIDI) continue;
+      bindings.push(binding(code, 'none', pitch));
+    }
   }
   return bindings;
 }

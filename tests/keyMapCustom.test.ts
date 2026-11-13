@@ -7,11 +7,12 @@ import {
 } from '@/keyboard/keyMap';
 
 describe('默认键位不受自定义影响', () => {
-  it('没有改动时仍是 C2–B6 的 35 个白键', () => {
+  it('没有改动时仍是 C2–C7 的 36 个白键', () => {
     const map = new PianoKeyMap();
     expect(map.customCount).toBe(0);
-    expect(map.pitches).toHaveLength(35);
-    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(60);
+    expect(map.pitches).toHaveLength(36);
+    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(48);
+    expect(map.lookup('KeyG', 'none')?.pitch).toBe(60);
   });
 
   it('非法自定义被忽略：保留键、越界音高、非整数音高', () => {
@@ -22,7 +23,7 @@ describe('默认键位不受自定义影响', () => {
     ];
     const map = new PianoKeyMap({ custom });
     expect(map.customCount).toBe(0);
-    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(60);
+    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(48);
   });
 });
 
@@ -30,8 +31,8 @@ describe('自定义绑定', () => {
   it('把音绑到空闲键：原音的默认键位让出来', () => {
     const map = new PianoKeyMap({ custom: [{ code: 'KeyI', modifier: 'none', pitch: 60 }] });
     expect(map.lookup('KeyI', 'none')?.pitch).toBe(60);
-    // C4 原来的 Q 键不再绑定
-    expect(map.lookup('KeyQ', 'none')).toBeUndefined();
+    // C4 原来在中排的 G 键
+    expect(map.lookup('KeyG', 'none')).toBeUndefined();
     expect(map.bindingsForPitch(60)).toHaveLength(1);
     expect(map.customCount).toBe(1);
     expect(map.customPitches.has(60)).toBe(true);
@@ -54,7 +55,7 @@ describe('自定义绑定', () => {
 
   it('只改 Shift 组合时，无修饰绑定继续可用', () => {
     const map = new PianoKeyMap({ custom: [{ code: 'KeyQ', modifier: 'shift', pitch: 61 }] });
-    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(60);
+    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(48);
     expect(map.lookup('KeyQ', 'shift')?.pitch).toBe(61);
     expect(map.labelFor(61)).toBe('⇧Q');
   });
@@ -62,11 +63,11 @@ describe('自定义绑定', () => {
   it('同一物理键的不同修饰键互不覆盖', () => {
     const map = new PianoKeyMap({
       custom: [
-        { code: 'KeyQ', modifier: 'none', pitch: 60 },
+        { code: 'KeyQ', modifier: 'none', pitch: 49 },
         { code: 'KeyQ', modifier: 'shift', pitch: 61 },
       ],
     });
-    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(60);
+    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(49);
     expect(map.lookup('KeyQ', 'shift')?.pitch).toBe(61);
     expect(map.customCount).toBe(2);
   });
@@ -74,11 +75,11 @@ describe('自定义绑定', () => {
   it('可以绑到标点、以及小键盘', () => {
     const map = new PianoKeyMap({
       custom: [
-        { code: 'Minus', modifier: 'none', pitch: 61 },
+        { code: 'Comma', modifier: 'none', pitch: 61 },
         { code: 'Numpad5', modifier: 'none', pitch: 62 },
       ],
     });
-    expect(map.lookup('Minus', 'none')?.label).toBe('-');
+    expect(map.lookup('Comma', 'none')?.label).toBe(',');
     expect(map.lookup('Numpad5', 'none')?.label).toBe('N5');
     expect(map.lookup('Numpad5', 'none')?.pitch).toBe(62);
   });
@@ -89,18 +90,18 @@ describe('空置（不绑任何键）', () => {
     const map = new PianoKeyMap({ custom: [{ code: null, modifier: 'none', pitch: 60 }] });
     expect(map.bindingsForPitch(60)).toHaveLength(0);
     expect(map.labelFor(60)).toBeUndefined();
-    expect(map.lookup('KeyQ', 'none')).toBeUndefined();
+    expect(map.lookup('KeyG', 'none')).toBeUndefined();
     expect(map.pitches).not.toContain(60);
-    expect(map.pitches).toHaveLength(34);
+    expect(map.pitches).toHaveLength(35);
     expect(map.clearedPitches.has(60)).toBe(true);
     expect(map.customCount).toBe(1);
   });
 
   it('空置可以恢复：去掉记录后默认键位回来', () => {
     const map = new PianoKeyMap({ custom: [{ code: null, modifier: 'none', pitch: 60 }] });
-    expect(map.lookup('KeyQ', 'none')).toBeUndefined();
+    expect(map.lookup('KeyG', 'none')).toBeUndefined();
     const restored = new PianoKeyMap({ custom: [] });
-    expect(restored.lookup('KeyQ', 'none')?.pitch).toBe(60);
+    expect(restored.lookup('KeyG', 'none')?.pitch).toBe(60);
   });
 
   it('同一个音既空置又绑定时，以绑定为准', () => {
@@ -115,11 +116,11 @@ describe('空置（不绑任何键）', () => {
     expect(map.customCount).toBe(1);
   });
 
-  it('空置非默认音高不会破坏别的键位', () => {
-    const map = new PianoKeyMap({ custom: [{ code: null, modifier: 'none', pitch: 61 }] });
-    expect(map.pitches).toHaveLength(35);
-    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(60);
-    expect(map.clearedPitches.has(61)).toBe(true);
+  it('空置本来就没有键的音不会破坏别的键位', () => {
+    const map = new PianoKeyMap({ custom: [{ code: null, modifier: 'none', pitch: 37 }] });
+    expect(map.pitches).toHaveLength(36);
+    expect(map.lookup('KeyQ', 'none')?.pitch).toBe(48);
+    expect(map.clearedPitches.has(37)).toBe(true);
   });
 });
 
@@ -140,7 +141,7 @@ describe('物理键工具', () => {
     expect(charForCode('Digit8')).toBe('8');
     expect(charForCode('Comma')).toBe(',');
     expect(charForCode('Semicolon')).toBe(';');
-    expect(charForCode('Backquote')).toBe('`');
+    expect(charForCode('BracketRight')).toBe(']');
     expect(charForCode('Numpad9')).toBe('9');
     expect(charForCode('F7')).toBe('f7');
   });

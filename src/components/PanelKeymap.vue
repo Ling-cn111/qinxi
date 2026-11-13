@@ -105,9 +105,10 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
     </div>
 
     <p class="layout__desc">
-      一排键 = 一个八度，从左到右依次是 <b>C D E F G A B</b>，五排正好覆盖 C2–B6。
-      默认不绑黑键（C♯ D♯ F♯ G♯ A♯）—— 键盘上没有多余的位置，硬绑只能靠 Shift 或挤占别的行。
-      需要黑键时用鼠标点琴键，或在下面自定义到任意空闲键上。
+      按给定的键位表原样排，只有白键，音域覆盖 <b>C2–C7</b>：<br />
+      下排 <b>Z–M</b> = C2–B2；上排 <b>Q–T</b> = C3–G3；中排 <b>D–'</b> 接着 A3–B4；
+      上排 <b>Y–]</b> = C5–B5；数字排 <b>5–=</b> = C6–C7。<br />
+      黑键一律不绑（<b>S</b> / <b>2</b> / <b>3</b> 是空的）；其余空闲键可以用下面的自定义绑上。
     </p>
 
     <p class="status">{{ statusText }}</p>
@@ -155,8 +156,8 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
 
     <p class="panel-desc panel-desc--tight">
       键帽按八度着色，同一组音阶同一个颜色；演奏时点亮，被自定义过的键多一条暖色底边。
-      没有音名的键（<b>Tab</b>、<b>Caps</b>、标点、以及数字排的 <b>8 9 0 - =</b>）是空闲的，
-      想用哪个就在上面选中一个音再按它。
+      没有音名的键（<b>`</b>、<b>1–4</b>、<b>A</b>、<b>S</b>、<b>\</b>、<b>, . /</b>
+      以及整个小键盘）是空闲的，想用哪个就在上面选中一个音再按它。
     </p>
 
     <KeyMapDiagram
@@ -195,33 +196,33 @@ onBeforeUnmount(() => window.clearTimeout(resetTimer));
 }
 
 .layout__row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  gap: 14px;
   align-items: baseline;
-  gap: 16px;
-  padding: 7px 10px 7px 2px;
+  padding: 8px 10px 8px 2px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.055);
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 12px;
 }
 
 .layout__label {
-  flex: 0 0 46px;
   color: rgba(231, 227, 220, 0.34);
   font-size: 11px;
   letter-spacing: 0.06em;
 }
 
 .layout__keys {
-  flex: 1 1 auto;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.02em;
+  line-height: 1.95;
   color: rgba(231, 227, 220, 0.74);
 }
 
 .layout__range {
-  flex: 0 0 auto;
   font-size: 11px;
   letter-spacing: 0.05em;
   color: rgba(229, 199, 154, 0.5);
+  white-space: nowrap;
 }
 
 .layout__desc {

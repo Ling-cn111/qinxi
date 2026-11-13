@@ -35,7 +35,7 @@ describe('八度配色', () => {
 describe('修饰键回落', () => {
   it('默认布局没有 Shift 绑定，误按 Shift 仍能出声', () => {
     const map = new PianoKeyMap();
-    expect(resolveBinding(map, 'KeyQ', 'shift')?.pitch).toBe(60);
+    expect(resolveBinding(map, 'KeyQ', 'shift')?.pitch).toBe(48);
     expect(resolveBinding(map, 'KeyQ', 'shift')?.modifier).toBe('none');
   });
 
@@ -48,7 +48,7 @@ describe('修饰键回落', () => {
 
   it('没有绑定就是没有绑定', () => {
     const map = new PianoKeyMap();
-    expect(resolveBinding(map, 'KeyI', 'none')).toBeUndefined();
-    expect(resolveBinding(map, 'KeyI', 'shift')).toBeUndefined();
+    expect(resolveBinding(map, 'KeyA', 'none')).toBeUndefined();
+    expect(resolveBinding(map, 'KeyA', 'shift')).toBeUndefined();
   });
 });

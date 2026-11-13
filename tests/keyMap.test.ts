@@ -22,18 +22,18 @@ describe('whitePitchSequence', () => {
   });
 });
 
-describe('默认布局：一排一个八度，只有白键', () => {
-  it('覆盖 C2–B6 共 35 个白键，没有任何黑键', () => {
+describe('默认布局：照给定键位表，只有白键', () => {
+  it('覆盖 C2–C7 共 36 个白键，没有任何黑键', () => {
     const pitches = keyMap.pitches;
-    expect(pitches).toHaveLength(35);
+    expect(pitches).toHaveLength(36);
     expect(pitches[0]).toBe(36);
-    expect(pitches[pitches.length - 1]).toBe(95);
+    expect(pitches[pitches.length - 1]).toBe(96);
     for (const pitch of pitches) {
       expect([0, 2, 4, 5, 7, 9, 11]).toContain(pitch % 12);
     }
   });
 
-  it('下排 Z–M 正好是 C2–B2', () => {
+  it('下排 Z–M 是 C2–B2', () => {
     expect(keyMap.lookup('KeyZ', 'none')?.pitch).toBe(36);
     expect(keyMap.lookup('KeyX', 'none')?.pitch).toBe(38);
     expect(keyMap.lookup('KeyC', 'none')?.pitch).toBe(40);
@@ -41,22 +41,60 @@ describe('默认布局：一排一个八度，只有白键', () => {
     expect(keyMap.lookup('KeyB', 'none')?.pitch).toBe(43);
     expect(keyMap.lookup('KeyN', 'none')?.pitch).toBe(45);
     expect(keyMap.lookup('KeyM', 'none')?.pitch).toBe(47);
+    expect(midiToName(keyMap.lookup('KeyZ', 'none')!.pitch)).toBe('C2');
   });
 
-  it('每排的起点都是 C：A= C3、Q= C4、1= C5、小键盘 7= C6', () => {
-    expect(keyMap.lookup('KeyA', 'none')?.pitch).toBe(48);
-    expect(keyMap.lookup('KeyQ', 'none')?.pitch).toBe(60);
-    expect(keyMap.lookup('Digit1', 'none')?.pitch).toBe(72);
-    expect(keyMap.lookup('Numpad7', 'none')?.pitch).toBe(84);
-    expect(midiToName(keyMap.lookup('KeyQ', 'none')!.pitch)).toBe('C4');
+  it('上排前半 Q–T 是 C3–G3，后半 Y–] 跳到 C5–B5', () => {
+    expect(keyMap.lookup('KeyQ', 'none')?.pitch).toBe(48);
+    expect(keyMap.lookup('KeyW', 'none')?.pitch).toBe(50);
+    expect(keyMap.lookup('KeyE', 'none')?.pitch).toBe(52);
+    expect(keyMap.lookup('KeyR', 'none')?.pitch).toBe(53);
+    expect(keyMap.lookup('KeyT', 'none')?.pitch).toBe(55);
+    expect(keyMap.lookup('KeyY', 'none')?.pitch).toBe(72);
+    expect(keyMap.lookup('KeyU', 'none')?.pitch).toBe(74);
+    expect(keyMap.lookup('BracketRight', 'none')?.pitch).toBe(83);
+    expect(keyMap.lookup('Backslash', 'none')).toBeUndefined();
   });
 
-  it('每排第 7 个键是 B（不是 C）', () => {
-    expect(keyMap.lookup('KeyM', 'none')?.pitch).toBe(47); // B2
-    expect(keyMap.lookup('KeyJ', 'none')?.pitch).toBe(59); // B3
-    expect(keyMap.lookup('KeyU', 'none')?.pitch).toBe(71); // B4
-    expect(keyMap.lookup('Digit7', 'none')?.pitch).toBe(83); // B5
-    expect(keyMap.lookup('Numpad1', 'none')?.pitch).toBe(95); // B6
+  it("中排 D–' 接着 A3–B4", () => {
+    expect(keyMap.lookup('KeyD', 'none')?.pitch).toBe(57);
+    expect(keyMap.lookup('KeyF', 'none')?.pitch).toBe(59);
+    expect(keyMap.lookup('KeyG', 'none')?.pitch).toBe(60);
+    expect(keyMap.lookup('KeyH', 'none')?.pitch).toBe(62);
+    expect(keyMap.lookup('KeyJ', 'none')?.pitch).toBe(64);
+    expect(keyMap.lookup('KeyK', 'none')?.pitch).toBe(65);
+    expect(keyMap.lookup('KeyL', 'none')?.pitch).toBe(67);
+    expect(keyMap.lookup('Semicolon', 'none')?.pitch).toBe(69);
+    expect(keyMap.lookup('Quote', 'none')?.pitch).toBe(71);
+    expect(keyMap.lookup('KeyA', 'none')).toBeUndefined();
+  });
+
+  it('数字排 5–= 是 C6–C7', () => {
+    expect(keyMap.lookup('Digit5', 'none')?.pitch).toBe(84);
+    expect(keyMap.lookup('Digit6', 'none')?.pitch).toBe(86);
+    expect(keyMap.lookup('Digit9', 'none')?.pitch).toBe(91);
+    expect(keyMap.lookup('Digit0', 'none')?.pitch).toBe(93);
+    expect(keyMap.lookup('Minus', 'none')?.pitch).toBe(95);
+    expect(keyMap.lookup('Equal', 'none')?.pitch).toBe(96);
+    expect(midiToName(keyMap.lookup('Equal', 'none')!.pitch)).toBe('C7');
+  });
+
+  it('删掉的黑键与空闲键都不发声', () => {
+    const idle = [
+      'KeyS',
+      'Digit2',
+      'Digit3',
+      'Digit1',
+      'Digit4',
+      'Backquote',
+      'Comma',
+      'Period',
+      'Slash',
+      'Numpad5',
+    ];
+    for (const code of idle) {
+      expect(keyMap.lookup(code, 'none')).toBeUndefined();
+    }
   });
 
   it('通篇没有修饰键绑定，也没有黑键绑定', () => {
@@ -66,13 +104,6 @@ describe('默认布局：一排一个八度，只有白键', () => {
     );
   });
 
-  it('默认布局里白键之外的空闲键不发声', () => {
-    expect(keyMap.lookup('Digit8', 'none')).toBeUndefined();
-    expect(keyMap.lookup('KeyI', 'none')).toBeUndefined();
-    expect(keyMap.lookup('KeyK', 'none')).toBeUndefined();
-    expect(keyMap.lookup('Comma', 'none')).toBeUndefined();
-  });
-
   it('每个可弹音高都有展示标签', () => {
     for (const pitch of keyMap.pitches) {
       expect(keyMap.labelFor(pitch)).toBeTruthy();
@@ -80,8 +111,8 @@ describe('默认布局：一排一个八度，只有白键', () => {
   });
 
   it('字符索引供谱面解析使用（大小写不敏感）', () => {
-    expect(keyMap.findByChar('G')?.pitch).toBe(55); // G3
-    expect(keyMap.findByChar('g')?.pitch).toBe(55);
+    expect(keyMap.findByChar('G')?.pitch).toBe(60); // C4
+    expect(keyMap.findByChar('g')?.pitch).toBe(60);
     expect(keyMap.findByChar('#')).toBeUndefined();
   });
 
@@ -99,16 +130,14 @@ describe('默认布局：一排一个八度，只有白键', () => {
 });
 
 describe('布局摘要（键位页文案）', () => {
-  it('五行、每行七个键、音域连续', () => {
+  it('五行，每行列出「键 + 音」，小键盘标为空闲', () => {
     expect(KEYMAP_ROWS).toHaveLength(5);
-    for (const row of KEYMAP_ROWS) {
-      expect(row.keys.split(' ')).toHaveLength(7);
-      expect(row.range).toMatch(/^[A-G]\d–B\d$/);
-    }
-    expect(KEYMAP_ROWS[0].keys).toBe('Z X C V B N M');
+    expect(KEYMAP_ROWS[0].keys.startsWith('Z C2 · X D2')).toBe(true);
     expect(KEYMAP_ROWS[0].range).toBe('C2–B2');
-    expect(KEYMAP_ROWS[4].keys).toBe('N7 N8 N9 N4 N5 N6 N1');
-    expect(KEYMAP_ROWS[4].range).toBe('C6–B6');
+    expect(KEYMAP_ROWS[2].keys.startsWith('Q C3 · W D3')).toBe(true);
+    expect(KEYMAP_ROWS[2].range).toBe('C3–B5');
+    expect(KEYMAP_ROWS[4].keys).toContain('空闲');
+    expect(KEYMAP_ROWS[4].range).toBe('—');
   });
 });
 
