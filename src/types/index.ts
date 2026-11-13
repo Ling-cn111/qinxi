@@ -23,6 +23,9 @@ export interface NoteEvent {
 /** 键盘修饰键。AutoPiano 社区谱用 Shift 组合表示黑键。 */
 export type KeyModifier = 'none' | 'shift' | 'alt';
 
+/** 钢琴下方控制台的三个页签 */
+export type DeckTab = 'display' | 'sound' | 'keymap';
+
 /** 一条「物理按键 → 音高」的绑定 */
 export interface KeyBinding {
   /** KeyboardEvent.code，例如 KeyZ / Digit1 / Semicolon */

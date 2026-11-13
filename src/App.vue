@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import PianoKeyboard from '@/components/PianoKeyboard.vue';
+import ControlDeck from '@/components/ControlDeck.vue';
 import { PianoEngine, type EngineStatus } from '@/audio/PianoEngine';
 import { getKeyMap, modifierFromEvent } from '@/keyboard/keyMap';
 import { midiToName } from '@/audio/note';
+import type { NoteLabelMode } from '@/keyboard/labels';
+import { DEFAULT_INSTRUMENT_ID } from '@/data/instruments';
 import { DEFAULT_VIEWPORT_ID, PIANO_VIEWPORTS, type PianoViewport } from '@/keyboard/layout';
+import type { DeckTab } from '@/types';
 
 const engine = new PianoEngine();
 const keyMap = getKeyMap();
@@ -12,9 +16,23 @@ const keyMap = getKeyMap();
 const pressed = reactive(new Set<number>());
 const status = ref<EngineStatus>(engine.status);
 const volume = ref(100);
-const showLabels = ref(true);
 const viewportId = ref<PianoViewport['id']>(DEFAULT_VIEWPORT_ID);
 const recent = ref<string[]>([]);
+
+// 控制台状态
+const deckTab = ref<DeckTab>('display');
+const showHints = ref(true);
+const showNoteNames = ref(true);
+const showSolfege = ref(false);
+const instrument = ref(DEFAULT_INSTRUMENT_ID);
+const keymapPreset = ref('autopiano');
+const diagramMode = ref<'char' | 'note'>('note');
+
+const noteMode = computed<NoteLabelMode>(() => {
+  if (showSolfege.value) return 'solfege';
+  if (showNoteNames.value) return 'note';
+  return 'none';
+});
 
 /** 记录物理按键当前锁定的音高，避免 Shift 状态变化导致"松不掉" */
 const heldKeys = new Map<string, number>();
@@ -94,11 +112,9 @@ function onBlur(): void {
   releaseAll();
 }
 
-function onVolumeInput(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
-  volume.value = value;
-  engine.setVolume(value / 100);
-}
+watch(volume, (value) => {
+  engine.setVolume(Math.min(1, Math.max(0, value / 100)));
+});
 
 onMounted(() => {
   unsubscribeStatus = engine.onStatus((next) => {
@@ -146,15 +162,7 @@ onBeforeUnmount(() => {
               stroke-linecap="round"
             />
           </svg>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            :value="volume"
-            aria-label="主音量"
-            @input="onVolumeInput"
-          />
+          <input v-model.number="volume" type="range" min="0" max="100" step="1" aria-label="主音量" />
         </label>
       </div>
     </header>
@@ -175,10 +183,6 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="tools">
-          <label class="toggle">
-            <input v-model="showLabels" type="checkbox" />
-            <span>键位</span>
-          </label>
           <button type="button" class="text-btn" @click="releaseAll">全部松开</button>
         </div>
       </div>
@@ -186,10 +190,24 @@ onBeforeUnmount(() => {
       <PianoKeyboard
         :pressed="pressed"
         :key-map="keyMap"
-        :show-labels="showLabels"
+        :show-hints="showHints"
+        :note-mode="noteMode"
         :viewport="viewportId"
         @press="pressPitch"
         @release="releasePitch"
+      />
+
+      <ControlDeck
+        v-model:tab="deckTab"
+        v-model:show-hints="showHints"
+        v-model:note-names="showNoteNames"
+        v-model:solfege="showSolfege"
+        v-model:instrument="instrument"
+        v-model:volume="volume"
+        v-model:preset="keymapPreset"
+        v-model:diagram-mode="diagramMode"
+        :key-map="keyMap"
+        :pressed="pressed"
       />
 
       <div class="foot">
@@ -358,47 +376,6 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
-.toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.42);
-  cursor: pointer;
-}
-
-.toggle input {
-  appearance: none;
-  width: 22px;
-  height: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.06);
-  position: relative;
-  cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease;
-}
-
-.toggle input::after {
-  content: '';
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 8px;
-  height: 8px;
-  background: rgba(255, 255, 255, 0.4);
-  transition: transform 140ms ease, background 140ms ease;
-}
-
-.toggle input:checked {
-  border-color: rgba(207, 164, 106, 0.55);
-  background: rgba(207, 164, 106, 0.14);
-}
-
-.toggle input:checked::after {
-  transform: translateX(10px);
-  background: #cfa46a;
-}
-
 .text-btn {
   padding: 0;
   border: 0;
@@ -415,10 +392,10 @@ onBeforeUnmount(() => {
   color: rgba(255, 255, 255, 0.8);
 }
 
-/* 钢琴下方的纯文本行 */
+/* 控制台下方的纯文本行 */
 .foot {
   width: 90%;
-  margin: 6px auto 0;
+  margin: 14px auto 0;
   display: flex;
   align-items: baseline;
   gap: 24px;
