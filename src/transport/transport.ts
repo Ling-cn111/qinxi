@@ -76,10 +76,12 @@ export interface TransportCallbacks {
   /** 整首都播完了 */
   onEnd?: () => void;
   /**
-   * 把「已排程但还没响」的音作废（暂停 / 停止 / 跳转时触发）。
+   * 把「已排程但还没响」的音作废（暂停 / 停止 / 跳转 / 变速 / 设循环时触发）。
    * 引擎侧对应 `stopAll()` —— 前瞻窗里的音已经进了音频图，光停定时器是停不掉它们的。
    */
   onCancelAll?: () => void;
+  /** A-B 循环跳回 A 点时触发（参数为 A 点拍位）；界面借此清掉该段的判定与高亮 */
+  onLoopJump?: (aBeat: number) => void;
 }
 
 export interface TransportOptions {
@@ -121,6 +123,10 @@ export class Transport {
   private anchorBeat = 0;
   /** 暂停后停留的拍位 */
   private pausedBeat = 0;
+
+  /** A-B 循环：`null` = 未启用。循环语义为 [A, B)，B 点（含）之后的音不属于循环段 */
+  private loopA: number | null = null;
+  private loopB: number | null = null;
 
   private ticker: Ticker | null = null;
   private lastSnapshot: TransportSnapshot;
@@ -220,6 +226,9 @@ export class Transport {
     this.cursor = 0;
     this.pausedBeat = 0;
     this.playingValue = false;
+    // 旧曲的循环拍位对新曲没有意义，装谱即清
+    this.loopA = null;
+    this.loopB = null;
     this.ticker?.stop();
     this.lastSnapshot = this.snapshotAt(0, 0);
     this.callbacks.onTick?.(this.lastSnapshot);
@@ -303,11 +312,16 @@ export class Transport {
   private tick(): void {
     if (!this.playingValue) return;
     const now = this.now();
+    // 循环跳回放在调度之前：跳回后 A 点的音按「此刻」排程，本 tick 内就能发声（无缝）
+    this.jumpLoopIfNeeded(now);
     const horizon = now + this.lookahead;
+    // [A, B) 语义：B 点（含）之后的音不排程 —— 跳回时既没有残留，也不会吞掉段内的音
+    const limitBeat = this.loopA !== null && this.loopB !== null ? this.loopB : Number.POSITIVE_INFINITY;
     let scheduledAhead = 0;
 
     while (this.cursor < this.notes.length) {
       const note = this.notes[this.cursor];
+      if (note.startBeat >= limitBeat - 1e-9) break;
       const planned = this.audioTimeForBeat(note.startBeat);
       if (planned > horizon) break;
 
@@ -327,11 +341,78 @@ export class Transport {
     }
 
     const beat = this.clampBeat(this.beatAt(now));
-    const finished = this.cursor >= this.notes.length && beat >= this.totalBeatsValue;
+    // 循环激活时永不「播完」：指针会被拉回 A，一直死磕到用户手动停止
+    const finished = !this.loopActive && this.cursor >= this.notes.length && beat >= this.totalBeatsValue;
     this.lastSnapshot = this.snapshotAt(beat, scheduledAhead);
     this.callbacks.onTick?.(this.lastSnapshot);
 
     if (finished) this.finish();
+  }
+
+  // ------------------------------------------------------------ 变速与循环
+
+  get loopActive(): boolean {
+    return this.loopA !== null && this.loopB !== null;
+  }
+
+  /** 当前循环区间；未启用时为 null */
+  get loopRange(): { a: number; b: number } | null {
+    return this.loopActive ? { a: this.loopA as number, b: this.loopB as number } : null;
+  }
+
+  /**
+   * 改变 BPM。
+   *
+   * 播放中变速必须「重锚」：此刻拍位保持不变、anchorTime 定在当前时刻，
+   * 后续音符全部按新拍长重新排程 —— 拍位连续、不跳变。已排进前瞻窗的音
+   * 是按旧拍长算的绝对时刻，必须作废后重排，否则变速瞬间会按旧速度响一串。
+   */
+  setTempo(bpm: number): void {
+    if (!(Number.isFinite(bpm) && bpm > 0)) throw new RangeError('bpm 必须是正数');
+    if (!this.playingValue) {
+      this.bpmValue = bpm;
+      return;
+    }
+    this.reanchorAt(this.beatAt(this.now()));
+    this.bpmValue = bpm;
+  }
+
+  /** 启用 A-B 循环（0 ≤ A < B）。播放中设置会立刻按新边界重排 */
+  setLoop(aBeat: number, bBeat: number): void {
+    if (!(Number.isFinite(aBeat) && Number.isFinite(bBeat) && aBeat >= 0 && bBeat > aBeat)) {
+      throw new RangeError('循环区间必须满足 0 ≤ A < B');
+    }
+    this.loopA = aBeat;
+    this.loopB = bBeat;
+    if (this.playingValue) this.reanchorAt(this.beatAt(this.now()));
+  }
+
+  /** 关闭 A-B 循环。排程上限解除，播放中的指针从当前位置自然继续 */
+  clearLoop(): void {
+    this.loopA = null;
+    this.loopB = null;
+  }
+
+  /** 播放中重锚到指定拍位：拍位连续、不留 leadIn，已排程的音作废待重排 */
+  private reanchorAt(beat: number): void {
+    const now = this.now();
+    this.anchorBeat = beat;
+    this.anchorTime = now;
+    this.cursor = this.firstIndexAtOrAfter(beat);
+    this.callbacks.onCancelAll?.();
+  }
+
+  /** 播放指针越过 B 点 → 无缝跳回 A 点 */
+  private jumpLoopIfNeeded(now: number): void {
+    if (!this.loopActive) return;
+    const beat = this.beatAt(now);
+    if (beat < (this.loopB as number)) return;
+    // 锚点整体平移（anchorTime 不动）：跳回后此刻拍位恰为 A —— 时间轴连续，无停顿。
+    // 用超出量修正而不是固定平移 (A-B)，tick 被延迟拖过 B 点很多时也能精确落回 A。
+    this.anchorBeat -= beat - (this.loopA as number);
+    this.cursor = this.firstIndexAtOrAfter(this.loopA as number);
+    this.callbacks.onCancelAll?.();
+    this.callbacks.onLoopJump?.(this.loopA as number);
   }
 
   private finish(): void {

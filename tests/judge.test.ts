@@ -194,3 +194,41 @@ describe('collectMissed：漏按清扫', () => {
     expect(collectMissed(single, NONE, boundaryBeat + 1e-6, SPB96)).toEqual([0]);
   });
 });
+
+describe('变速下的判定不变性（窗口按物理毫秒锁定）', () => {
+  const SPB96 = 0.625; // 96 BPM
+  const SPB48 = 1.25; // 96 BPM 的 50% 变速
+  const notes = [note(60, 4)];
+
+  // 物理偏差 δms → 拍差 = (δ/1000) / spb。判定把拍差 × spb 换回毫秒，
+  // 所以无论速度怎么变，同一物理偏差永远落在同一档。
+  // 偏差值避开 ±80/±160ms 的闭区间边界：边界处的浮点往返误差属于 gradeForDelta 的
+  // 既有容差测试覆盖范围，这里验证的是「变速不变性」本身。
+  const hitWithPhysicalDelta = (deltaSec: number, spb: number) =>
+    judgeHit({ pitch: 60, hitBeat: 4 + deltaSec / spb }, notes, new Set<number>(), spb);
+
+  it.each([
+    [0.03, 'perfect'],
+    [0.079, 'perfect'],
+    [0.081, 'good'],
+    [0.159, 'good'],
+    [0.161, 'miss'],
+    [0.2, 'miss'],
+  ] as const)('50%% 变速下物理偏差 %f s → %s（与原速一致）', (deltaSec, grade) => {
+    const slow = hitWithPhysicalDelta(deltaSec, SPB48);
+    const normal = hitWithPhysicalDelta(deltaSec, SPB96);
+    expect(slow.grade).toBe(grade);
+    expect(normal.grade).toBe(grade);
+    if (grade !== 'miss') {
+      // 超出 Good 窗口的 miss 没有命中音，deltaMs 恒为 0，不参与换算断言
+      expect(slow.deltaMs).toBeCloseTo(deltaSec * 1000, 6);
+      expect(normal.deltaMs).toBeCloseTo(deltaSec * 1000, 6);
+    }
+  });
+
+  it('变速不改变漏按清扫的窗口毫秒数', () => {
+    // 96 BPM：160ms = 0.256 拍；48 BPM：160ms = 0.128 拍 —— 都恰好卡在窗口边界上不算漏
+    expect(collectMissed(notes, new Set<number>(), 4 + 0.16 / SPB96, SPB96)).toEqual([]);
+    expect(collectMissed(notes, new Set<number>(), 4 + 0.16 / SPB48, SPB48)).toEqual([]);
+  });
+});
