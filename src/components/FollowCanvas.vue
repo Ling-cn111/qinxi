@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { buildKeyboardLayout, WHITE_KEY_COUNT } from '@/keyboard/layout';
+import { buildKeyboardLayout, KEYBED_WIDTH_PERCENT, WHITE_KEY_COUNT } from '@/keyboard/layout';
 import { themeId } from '@/theme/useTheme';
 import type { NoteEvent } from '@/types';
 import type { Grade } from '@/game/judge';
@@ -8,11 +8,11 @@ import type { Grade } from '@/game/judge';
 /**
  * 下落音符画布（Canvas 2D，rAF 逐帧绘制，禁用一切 DOM/CSS 动画）。
  *
- * ## 摆放与坐标
+ * ## 摆放
  *
- * 组件被放进 `PianoKeyboard` 的 `.keybed`（通过 overlay 插槽），绝对定位铺满键床上部 ——
- * 所以它**跟着键床一起横向滚动**，音符的 x 坐标直接用键床几何
- * （`buildKeyboardLayout()`，单位 = 白键宽），和琴键 1:1 对齐，不需要关心视口滚到哪。
+ * 占据钢琴上方「音符频谱」同一条带的位置（跟弹播放时把频谱整体替换掉，
+ * 由 App 控制 v-if / v-else），所以宽度 = 琴键视口宽度（90% 页面宽）。
+ * 音符的 x 坐标按键床几何换算再减去键床的滚动量 —— 音区切换、手动滚动都对得上。
  *
  * ## 时间 → 纵向位置
  *
@@ -24,6 +24,12 @@ import type { Grade } from '@/game/judge';
  *
  * `pxPerBeat = 画布高 / 预备拍数`，预备拍数由固定预备秒数（2s）按 BPM 折算 ——
  * BPM 越高每拍像素越少、下落越快，速度与 BPM 严格匹配。
+ *
+ * ## 颜色
+ *
+ * `NoteEvent.hand` 有左右手信息时：右手 = 主题强调色、左手 = 亮墨色；
+ * 没有 hand 信息（内置谱就没有）→ 回落按黑白键区分：白键 = 强调色、黑键 = 亮墨 + 亮边。
+ * 已判定的音符沉成暗灰，不再抢视线。
  *
  * ## 数据流（低耦合）
  *
@@ -61,9 +67,12 @@ for (const key of buildKeyboardLayout()) {
   geometry.set(key.pitch, { left: key.left, width: key.width, isBlack: key.isBlack });
 }
 
+/** 键床横向滚动容器（.piano-key-wrap）：每帧读 scrollLeft 对齐琴键 */
+let scroller: Element | null = null;
+
 /**
- * 配色跟着外观主题走：白键音符用主题强调色，黑键音符用亮墨色，
- * 判定线用强调色（从 `<html>` 读 CSS 变量，见 src/theme/themes.ts）。
+ * 配色跟着外观主题走（从 `<html>` 读 CSS 变量，见 src/theme/themes.ts）：
+ * 右手 / 白键 = 强调色，左手 / 黑键 = 亮墨色。
  */
 const palette = {
   accent: '207, 164, 106',
@@ -83,12 +92,12 @@ function readPalette(): void {
 function resize(): void {
   const canvas = canvasRef.value;
   if (!canvas) return;
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
   if (width === 0 || height === 0) return;
-  canvas.width = Math.round(width * dpr);
-  canvas.height = Math.round(height * dpr);
+  canvas.width = Math.max(1, Math.round(width * dpr));
+  canvas.height = Math.max(1, Math.round(height * dpr));
   ctx = canvas.getContext('2d');
   ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
   draw();
@@ -103,7 +112,9 @@ function draw(): void {
 
   ctx.clearRect(0, 0, width, height);
   const lineY = height;
-  const unit = width / WHITE_KEY_COUNT;
+  // 键床 px 宽 = 视口宽 × 144.3%；1 白键 = 键床宽 / 52
+  const unit = (width * KEYBED_WIDTH_PERCENT) / 100 / WHITE_KEY_COUNT;
+  const scrollLeft = scroller?.scrollLeft ?? 0;
   const pxPerBeat = height / ((LEAD_SECONDS * props.bpm) / 60);
   const beat = props.getBeat();
 
@@ -118,20 +129,26 @@ function draw(): void {
     // 已经过线太远（正在被按住 / 已经判定完沉底）的不用再画
     if (yTopRaw > lineY + 4 || yBottom < -40) continue;
 
-    const x = geo.left * unit;
+    const x = geo.left * unit - scrollLeft;
     const w = geo.width * unit;
+    if (x + w < 0 || x > width) continue; // 滚出视口的键不画
+
     const yTop = Math.max(0, yTopRaw);
     const h = Math.max(MIN_HEIGHT_PX, yBottom - Math.min(yTop, lineY));
     const judgedGrade = props.judged.get(index);
 
+    // 左右手优先；谱面没写 hand 时按黑白键区分
+    let fill: string;
     if (judgedGrade) {
-      // 已判定：沉成暗灰，不再抢视线
-      ctx.fillStyle = `rgba(${palette.white}, 0.16)`;
-    } else if (geo.isBlack) {
-      ctx.fillStyle = `rgba(${palette.ink}, 0.88)`;
+      fill = `rgba(${palette.white}, 0.16)`;
+    } else if (item.hand === 'left') {
+      fill = `rgba(${palette.ink}, 0.88)`;
+    } else if (item.hand === 'right' || !geo.isBlack) {
+      fill = `rgba(${palette.accent}, 0.9)`;
     } else {
-      ctx.fillStyle = `rgba(${palette.accent}, 0.9)`;
+      fill = `rgba(${palette.ink}, 0.88)`;
     }
+    ctx.fillStyle = fill;
 
     // 顶部圆角矩形：贴判定线的底边是平的（齐线落键的观感）
     const radius = Math.min(4, h / 2);
@@ -145,8 +162,8 @@ function draw(): void {
     ctx.closePath();
     ctx.fill();
 
-    // 黑键音符描一圈亮边，和白键块区分得更清楚
-    if (geo.isBlack && !judgedGrade) {
+    // 黑键音符（无 hand 回落时）描一圈亮边，和白键块区分得更清楚
+    if (!item.hand && geo.isBlack && !judgedGrade) {
       ctx.strokeStyle = `rgba(${palette.white}, 0.5)`;
       ctx.lineWidth = 1;
       ctx.stroke();
@@ -198,6 +215,7 @@ watch(themeId, () => {
 
 onMounted(() => {
   readPalette();
+  scroller = document.querySelector('.piano-key-wrap');
   resize();
   resizeObserver = new ResizeObserver(() => resize());
   if (canvasRef.value) resizeObserver.observe(canvasRef.value);
@@ -208,23 +226,39 @@ onBeforeUnmount(() => {
   stopLoop();
   resizeObserver?.disconnect();
   resizeObserver = null;
+  scroller = null;
 });
 </script>
 
 <template>
-  <canvas ref="canvasRef" class="follow-canvas" aria-hidden="true"></canvas>
+  <div class="follow-viz" aria-hidden="true">
+    <canvas ref="canvasRef" class="follow-viz__canvas"></canvas>
+  </div>
 </template>
 
 <style scoped>
-/* 绝对定位铺满键床上部：跟键床一起横向滚动，坐标与琴键 1:1。
-   pointer-events 必须关掉 —— 底下是可点的琴键。 */
-.follow-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 62%;
-  z-index: 3;
+/* 与音符频谱（NoteVisualizer .viz）同一条带：同宽同高，替换时布局不跳动 */
+.follow-viz {
+  width: 90%;
+  height: 96px;
+  margin: 12px auto -12px;
   pointer-events: none;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.34));
+  /* 顶部渐隐，音符冲进顶端不会撞出一条硬边 */
+  mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 62%, rgba(0, 0, 0, 0) 100%);
+  -webkit-mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 62%, rgba(0, 0, 0, 0) 100%);
+}
+
+.follow-viz__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 820px) {
+  .follow-viz {
+    width: 92%;
+    height: 84px;
+  }
 }
 </style>

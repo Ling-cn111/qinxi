@@ -732,7 +732,16 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <NoteVisualizer ref="visualizer" />
+      <!-- 跟弹播放时：下落音符画布替换音符频谱（弹奏反馈）；其余情况显示频谱 -->
+      <FollowCanvas
+        v-if="playMode === 'follow' && playState !== 'idle'"
+        :notes="currentNotesRef"
+        :judged="judgedMap"
+        :get-beat="() => transport.rawBeat"
+        :playing="playState === 'playing'"
+        :bpm="followBpm"
+      />
+      <NoteVisualizer v-else ref="visualizer" />
 
       <PianoKeyboard
         :pressed="combinedPressed"
@@ -744,18 +753,7 @@ onBeforeUnmount(() => {
         :edit-pitch="editPitch"
         @press="pressPitch"
         @release="releasePitch"
-      >
-        <template #overlay>
-          <FollowCanvas
-            v-if="playMode === 'follow' && playState !== 'idle'"
-            :notes="currentNotesRef"
-            :judged="judgedMap"
-            :get-beat="() => transport.rawBeat"
-            :playing="playState === 'playing'"
-            :bpm="followBpm"
-          />
-        </template>
-      </PianoKeyboard>
+      />
 
       <ControlDeck
         v-model:tab="deckTab"
