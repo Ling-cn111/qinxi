@@ -10,13 +10,16 @@ import {
   type PianoViewport,
 } from '@/keyboard/layout';
 import type { PianoKeyMap } from '@/keyboard/keyMap';
+import { noteLabelFor, type NoteLabelMode } from '@/keyboard/labels';
 
 const props = defineProps<{
   /** 当前被按下的音高集合 */
   pressed: ReadonlySet<number>;
   keyMap: PianoKeyMap;
-  /** 是否显示键盘字符 */
-  showLabels: boolean;
+  /** 是否显示按键提示（电脑键盘字符） */
+  showHints: boolean;
+  /** 键面下方的音名行：不显示 / 音名 / 唱名 */
+  noteMode: NoteLabelMode;
   /** 当前 5 八度视口 */
   viewport: PianoViewport['id'];
 }>();
@@ -42,8 +45,10 @@ const blackStyle = (key: { left: number; width: number }) => ({
 });
 
 const noteNameOf = (pitch: number) => props.keyMap.noteNameFor(pitch);
-const charOf = (pitch: number) => (props.showLabels ? props.keyMap.charFor(pitch) : undefined);
-const modifierOf = (pitch: number) => props.keyMap.modifierFor(pitch);
+const charOf = (pitch: number) => props.keyMap.charFor(pitch);
+const hintOf = (pitch: number) => (props.showHints ? charOf(pitch) : undefined);
+const nameOf = (pitch: number) => noteLabelFor(pitch, props.noteMode);
+const modifierSymbol = (pitch: number) => (props.keyMap.modifierFor(pitch) === 'alt' ? '⌥' : '⇧');
 const pressedClass = (pitch: number) => (props.pressed.has(pitch) ? 'is-pressed' : '');
 
 const onDown = (pitch: number, event: PointerEvent) => {
@@ -112,8 +117,8 @@ defineExpose({ scrollToViewport });
           @contextmenu.prevent
         >
           <span class="wkey__tip">
-            <span class="wkey__note">{{ noteNameOf(key.pitch) }}</span>
-            <span v-if="charOf(key.pitch)" class="wkey__key">{{ charOf(key.pitch) }}</span>
+            <span v-if="hintOf(key.pitch)" class="wkey__key">{{ hintOf(key.pitch) }}</span>
+            <span v-if="nameOf(key.pitch)" class="wkey__note">{{ nameOf(key.pitch) }}</span>
           </span>
         </button>
 
@@ -131,9 +136,12 @@ defineExpose({ scrollToViewport });
           @pointercancel="emit('release', key.pitch)"
           @contextmenu.prevent
         >
-          <span v-if="charOf(key.pitch)" class="bkey__tip">
-            <span class="bkey__shift">{{ modifierOf(key.pitch) === 'alt' ? '⌥' : '⇧' }}</span
-            >{{ charOf(key.pitch) }}
+          <span v-if="hintOf(key.pitch)" class="bkey__tip">
+            <span class="bkey__mod">{{ modifierSymbol(key.pitch) }}</span>
+            <span class="bkey__char">{{ hintOf(key.pitch) }}</span>
+          </span>
+          <span v-else-if="nameOf(key.pitch)" class="bkey__tip bkey__tip--name">
+            {{ nameOf(key.pitch) }}
           </span>
         </button>
       </div>
@@ -291,41 +299,62 @@ defineExpose({ scrollToViewport });
 }
 
 /* ---------------------------------------------------------------- 标注 */
+/* 键宽 2.775% 在 1440 视口下约 35px，标注用 12px 才不会挤成一团 */
 .wkey__tip {
   position: absolute;
   left: 0;
-  bottom: 6px;
+  bottom: 7px;
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   pointer-events: none;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
-.wkey__note,
 .wkey__key {
-  font-size: 10px;
+  font-size: 13.5px;
   line-height: 1;
-  color: #999;
+  letter-spacing: 0.02em;
+  color: #7f7f7f;
 }
 
+.wkey__note {
+  font-size: 13.5px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #9d9d9d;
+}
+
+/* 黑键宽约 25px，"⇧Z" 单行会顶到边框：修饰键与字符分两行 */
 .bkey__tip {
   position: absolute;
-  top: 7px;
+  top: 8px;
   left: 0;
   width: 100%;
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 10px;
   line-height: 1;
-  color: rgba(255, 255, 255, 0.6);
   pointer-events: none;
+  white-space: nowrap;
 }
 
-.bkey__shift {
-  font-size: 9px;
-  color: rgba(255, 255, 255, 0.42);
+.bkey__mod {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.bkey__char {
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.bkey__tip--name {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
 }
 </style>
