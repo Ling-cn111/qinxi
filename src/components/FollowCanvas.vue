@@ -16,10 +16,12 @@ import type { Grade } from '@/game/judge';
  *
  * ## 时间 → 纵向位置
  *
- * 判定线在画布**底边**（键盘顶部）。音符块底边在 `startBeat` 那一刻触线：
+ * 判定线在画布**底边**（键盘顶部）。每颗音是一根**紧凑的小长条**，从画布顶端入场、
+ * 匀速下落，**底边在 `startBeat` 那一刻正好压到判定线**——触线的瞬间就是弹奏时机；
+ * 过线后继续往下走出画布，不贴线残留：
  *
  * ```
- * y(beat) = lineY − (beat − currentBeat) × pxPerBeat
+ * yBottom(beat) = lineY − (startBeat − currentBeat) × pxPerBeat
  * ```
  *
  * `pxPerBeat = 画布高 / 预备拍数`，预备拍数由固定预备秒数（2s）按 BPM 折算 ——
@@ -53,8 +55,8 @@ const props = defineProps<{
 
 /** 音符提前多久出现在画布顶部（秒）——固定秒数按 BPM 折算成预备拍数 */
 const LEAD_SECONDS = 2;
-/** 音符块最小像素高度（16 分音很短，别画成一条线） */
-const MIN_HEIGHT_PX = 6;
+/** 下落小长条的像素高度（紧凑长条，底边对齐判定线） */
+const STRIP_HEIGHT = 12;
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
@@ -118,23 +120,21 @@ function draw(): void {
   const pxPerBeat = height / ((LEAD_SECONDS * props.bpm) / 60);
   const beat = props.getBeat();
 
-  // ---------------------------------------------------------- 音符块
+  // ---------------------------------------------------------- 下落小长条
   for (let index = 0; index < props.notes.length; index += 1) {
     const item = props.notes[index];
     const geo = geometry.get(item.pitch);
     if (!geo) continue;
 
+    // 长条底边的纵坐标：startBeat 那一刻正好压在判定线上
     const yBottom = lineY - (item.startBeat - beat) * pxPerBeat;
-    const yTopRaw = lineY - (item.startBeat + item.durationBeats - beat) * pxPerBeat;
-    // 已经过线太远（正在被按住 / 已经判定完沉底）的不用再画
-    if (yTopRaw > lineY + 4 || yBottom < -40) continue;
+    // 还在高空没入场 / 已完全滑出判定线的都不画
+    if (yBottom < -STRIP_HEIGHT || yBottom - STRIP_HEIGHT > lineY) continue;
 
     const x = geo.left * unit - scrollLeft;
     const w = geo.width * unit;
     if (x + w < 0 || x > width) continue; // 滚出视口的键不画
 
-    const yTop = Math.max(0, yTopRaw);
-    const h = Math.max(MIN_HEIGHT_PX, yBottom - Math.min(yTop, lineY));
     const judgedGrade = props.judged.get(index);
 
     // 左右手优先；谱面没写 hand 时按黑白键区分
@@ -150,19 +150,15 @@ function draw(): void {
     }
     ctx.fillStyle = fill;
 
-    // 顶部圆角矩形：贴判定线的底边是平的（齐线落键的观感）
-    const radius = Math.min(4, h / 2);
+    // 紧凑小长条：整块下落，底边触线的瞬间 = 弹奏时机；
+    // 过线后继续往下走出画布（被画布边缘裁掉），不贴线残留
+    const y = yBottom - STRIP_HEIGHT;
+    const radius = 3;
     ctx.beginPath();
-    ctx.moveTo(x + 1, lineY - h + radius);
-    ctx.quadraticCurveTo(x + 1, lineY - h, x + 1 + radius, lineY - h);
-    ctx.lineTo(x + w - 1 - radius, lineY - h);
-    ctx.quadraticCurveTo(x + w - 1, lineY - h, x + w - 1, lineY - h + radius);
-    ctx.lineTo(x + w - 1, lineY);
-    ctx.lineTo(x + 1, lineY);
-    ctx.closePath();
+    ctx.roundRect(x + 1, y, w - 2, STRIP_HEIGHT, radius);
     ctx.fill();
 
-    // 黑键音符（无 hand 回落时）描一圈亮边，和白键块区分得更清楚
+    // 黑键音符（无 hand 回落时）描一圈亮边，和白键条区分得更清楚
     if (!item.hand && geo.isBlack && !judgedGrade) {
       ctx.strokeStyle = `rgba(${palette.white}, 0.5)`;
       ctx.lineWidth = 1;
@@ -244,9 +240,7 @@ onBeforeUnmount(() => {
   margin: 12px auto -12px;
   pointer-events: none;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.34));
-  /* 顶部渐隐，音符冲进顶端不会撞出一条硬边 */
-  mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 62%, rgba(0, 0, 0, 0) 100%);
-  -webkit-mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 62%, rgba(0, 0, 0, 0) 100%);
+  /* 不做顶部渐隐：小长条必须能看见「从空中入场」，遮了就像从半空冒出来 */
 }
 
 .follow-viz__canvas {
