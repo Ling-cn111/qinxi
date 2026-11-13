@@ -14,12 +14,12 @@ import type { NoteEvent } from '@/types';
  * | |偏差| | 判定 |
  * | --- | --- |
  * | ≤ 80ms | Perfect |
- * | 80–140ms | Good |
- * | > 140ms / 错音 / 漏按 | Miss |
+ * | 80–160ms | Good |
+ * | > 160ms / 错音 / 漏按 | Miss |
  *
  * ## 边界约定
  *
- * 档位边界**闭区间**（80ms 整算 Perfect，140ms 整算 Good），
+ * 档位边界**闭区间**（80ms 整算 Perfect，160ms 整算 Good），
  * 浮点比较带 1e-9 容差 —— 单元测试用恰好在边界上的值锁死这个行为。
  *
  * ## 本模块刻意不知道的事
@@ -32,15 +32,15 @@ import type { NoteEvent } from '@/types';
 
 /** Perfect：偏差 ≤ 80ms（原 Great 档已并入） */
 export const PERFECT_MS = 80;
-/** Good：偏差 ≤ 140ms；再大就是 Miss */
-export const GOOD_MS = 140;
+/** Good：偏差 ≤ 160ms；再大就是 Miss */
+export const GOOD_MS = 160;
 
 /** 浮点比较容差（拍位） */
 const EPS = 1e-9;
 
 export type Grade = 'perfect' | 'good' | 'miss';
 
-/** 按毫秒偏差分档。边界闭区间：±80 → Perfect，±140 → Good，之外 Miss。 */
+/** 按毫秒偏差分档。边界闭区间：±80 → Perfect，±160 → Good，之外 Miss。 */
 export function gradeForDelta(deltaMs: number): Grade {
   const abs = Math.abs(deltaMs);
   if (abs <= PERFECT_MS) return 'perfect';
@@ -103,7 +103,7 @@ export interface JudgedMarks {
  * 判定一次按键。
  *
  * 在**同 pitch 且未被判定过**的音符里找离 hitBeat 最近的一个：
- * - 距离在 Good 窗口（±140ms）内 → 按偏差分档（Perfect 或 Good）；
+ * - 距离在 Good 窗口（±160ms）内 → 按偏差分档（Perfect 或 Good）；
  * - 窗口内没有同 pitch 的未判定音符 → Miss（错音或按键太早 / 太晚）。
  *
  * 注意：超出 Good 窗口的按键不消耗音符 —— 音符留给「漏按清扫」去判 Miss

@@ -200,8 +200,8 @@ docs/screenshots/  界面截图（PR 用）
 | \|偏差\| | 判定 |
 | --- | --- |
 | ≤ 80ms | Perfect |
-| 80–140ms | Good |
-| > 140ms / 错音 / 漏按 | Miss |
+| 80–160ms | Good |
+| > 160ms / 错音 / 漏按 | Miss |
 
 - **时间源**：按键瞬间读 `Transport.rawBeat`（`AudioContext.currentTime` 换算，与自动播放同锚点同公式）；
   换算函数 `beatAtTime` 与 Transport 内部实现一字不差，两边拍位必然对得上。

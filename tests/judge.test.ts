@@ -30,7 +30,7 @@ describe('gradeForDelta：分档边界（闭区间）', () => {
     [80.0001, 'good'],
     [GOOD_MS, 'good'],
     [-GOOD_MS, 'good'],
-    [140.0001, 'miss'],
+    [160.0001, 'miss'],
     [-200, 'miss'],
   ] as const)('%fms → %s', (ms, grade) => {
     expect(gradeForDelta(ms)).toBe(grade);
@@ -64,8 +64,8 @@ describe('时间 ↔ 拍位换算精度', () => {
     expect(beatsToMs(beats, SPB96)).toBeCloseTo(37, 9);
   });
 
-  it('判定窗口换算：96 BPM 时 ±140ms = 0.224 拍', () => {
-    expect(msToBeats(GOOD_MS, SPB96)).toBeCloseTo(0.224, 12);
+  it('判定窗口换算：96 BPM 时 ±160ms = 0.256 拍', () => {
+    expect(msToBeats(GOOD_MS, SPB96)).toBeCloseTo(0.256, 12);
     // 104 BPM 下窗口略宽（拍更短）
     expect(msToBeats(GOOD_MS, SPB104)).toBeGreaterThan(msToBeats(GOOD_MS, SPB96));
   });
@@ -104,17 +104,17 @@ describe('judgeHit：时间判定', () => {
     expect(hit(-85).grade).toBe('good');
   });
 
-  it('±140ms 内 → Good；再晚哪怕 1ms 也抓不到（留给漏按清扫）', () => {
-    expect(hit(139).grade).toBe('good');
-    expect(hit(141)).toMatchObject({ grade: 'miss', index: -1, note: null });
-    expect(hit(-150)).toMatchObject({ grade: 'miss', index: -1 });
+  it('±160ms 内 → Good；再晚哪怕 1ms 也抓不到（留给漏按清扫）', () => {
+    expect(hit(159).grade).toBe('good');
+    expect(hit(161)).toMatchObject({ grade: 'miss', index: -1, note: null });
+    expect(hit(-161)).toMatchObject({ grade: 'miss', index: -1 });
   });
 
   it('不同 BPM 下窗口跟着换算（120 BPM 拍更短，窗口拍数不变）', () => {
-    // 120 BPM：140ms = 0.28 拍；按 0.27 拍偏差仍是 Good
-    const result = judgeHit({ pitch: 60, hitBeat: 4 + 0.27 }, notes, NONE, SPB120);
+    // 120 BPM：160ms = 0.32 拍；按 0.31 拍偏差仍是 Good
+    const result = judgeHit({ pitch: 60, hitBeat: 4 + 0.31 }, notes, NONE, SPB120);
     expect(result.grade).toBe('good');
-    expect(result.deltaMs).toBeCloseTo(135, 6);
+    expect(result.deltaMs).toBeCloseTo(155, 6);
   });
 });
 
@@ -164,8 +164,8 @@ describe('collectMissed：漏按清扫', () => {
   ];
 
   it('窗口刚过的音算漏按，窗口内的不算', () => {
-    // 96 BPM：140ms = 0.224 拍。currentBeat = 2.2 → 第 0 音（0 拍）窗口早已过去，
-    // 第 1 音（2 拍）的窗口到 2.224 才过，还没漏
+    // 96 BPM：160ms = 0.256 拍。currentBeat = 2.2 → 第 0 音（0 拍）窗口早已过去，
+    // 第 1 音（2 拍）的窗口到 2.256 才过，还没漏
     const missed = collectMissed(notes, NONE, 2.2, SPB96);
     expect(missed).toEqual([0]);
   });
