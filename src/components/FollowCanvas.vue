@@ -59,6 +59,8 @@ const LEAD_SECONDS = 2;
 const STRIP_HEIGHT = 8;
 /** 命中闪光的持续时长（秒） */
 const FLASH_SECONDS = 0.38;
+/** 判定飘字的持续时长（秒）：在判定线上方浮起、放大、淡出 */
+const FLOAT_SECONDS = 0.72;
 
 /** 一次命中闪光：在哪根键的 x 上、什么时候、什么档位 */
 interface HitFlash {
@@ -67,7 +69,17 @@ interface HitFlash {
   grade: Grade;
 }
 
+/** 一个判定飘字：档位文字在按键位置的判定线上方浮起淡出（x 每帧按键床滚动量重算） */
+interface GradeFloat {
+  pitch: number;
+  born: number;
+  grade: Grade;
+}
+
 const flashes: HitFlash[] = [];
+const floats: GradeFloat[] = [];
+
+const GRADE_TEXT: Record<Grade, string> = { perfect: 'Perfect', good: 'Good', miss: 'Miss' };
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
@@ -259,6 +271,41 @@ function draw(): void {
     ctx.restore();
   }
 
+  // ---------------------------------------------------------- 判定飘字（Perfect / Good / Miss 浮起淡出）
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  for (let i = floats.length - 1; i >= 0; i -= 1) {
+    const item = floats[i];
+    const age = (nowMs - item.born) / 1000;
+    if (age > FLOAT_SECONDS) {
+      floats.splice(i, 1);
+      continue;
+    }
+    const geo = geometry.get(item.pitch);
+    if (!geo) {
+      floats.splice(i, 1);
+      continue;
+    }
+    // 前段（命中闪光同期）短暂放大弹出，之后匀速上浮淡出
+    const t = age / FLOAT_SECONDS;
+    const pop = age < 0.12 ? 0.82 + (age / 0.12) * 0.28 : 1.1 - 0.1 * ((age - 0.12) / (FLOAT_SECONDS - 0.12));
+    const y = lineY - 26 - 34 * t;
+    const alpha = t < 0.55 ? 1 : 1 - (t - 0.55) / 0.45;
+    const color =
+      item.grade === 'perfect' ? palette.gold : item.grade === 'good' ? palette.white : palette.red;
+    ctx.save();
+    ctx.translate((geo.left + geo.width / 2) * unit - scrollLeft, y);
+    ctx.scale(pop, pop);
+    ctx.shadowColor = `rgba(${color}, ${alpha * 0.9})`;
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = `rgba(${color}, ${alpha})`;
+    ctx.font = `700 15px ui-monospace, 'SF Mono', Menlo, Consolas, monospace`;
+    ctx.fillText(GRADE_TEXT[item.grade], 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
+
 }
 
 function frame(): void {
@@ -275,12 +322,14 @@ function stopLoop(): void {
   if (rafId) cancelAnimationFrame(rafId);
   rafId = 0;
   flashes.length = 0; // 暂停 / 停止时清掉未散尽的命中闪光
+  floats.length = 0; // 飘字同理
   draw(); // 补一帧静止画面（暂停 / 停止后的残影清掉）
 }
 
-/** 判定后在判定线上闪一下（App 判定完成就调用，Miss 闪红光） */
+/** 判定后在判定线上闪一下并浮出档位文字（App 判定完成就调用，Miss 闪红光飘红字） */
 function flash(pitch: number, grade: Grade): void {
   flashes.push({ pitch, born: performance.now(), grade });
+  floats.push({ pitch, born: performance.now(), grade });
 }
 
 watch(
