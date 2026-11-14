@@ -1,6 +1,7 @@
 # 琴习 QinXi
 
-在浏览器里弹钢琴、跟着谱子练琴的轻量 Web 应用。当前处于 **MVP 阶段 1：自由弹奏**。
+在浏览器里弹钢琴、跟着谱子练琴的轻量 Web 应用。已完成自由弹奏、自动播放、跟弹判定、
+刻意练习工具（变速 / A-B 循环 / 键盘谱 / 学弹）与多格式谱面导入（MIDI / MusicXML / ABC）。
 
 - 88 键钢琴，**5 八度视口**：白键宽 2.775%（AutoPiano 原值），一屏 36 个白键，横向滚动提供低/中/高三档；
   可开「键位跟随音区」让键位跟着视口走
@@ -10,7 +11,7 @@
 - 深色界面，尺寸/配色严格对齐 AutoPiano：黑漆顶盖、`.wkey` / `.bkey` 的渐变色与边框均取自其源码
 - 钢琴上方是**音符频谱**：按下即跳出柱子（含泛音），松手按指数衰减
 - 钢琴下方是**三页签控制台**：显示（键面标注）、声音（音量）、键位（C 大调布局 + 自定义 / 空置 + 映射图）
-- **自动播放内置曲目**：控制栏选曲（小星星 / 欢乐颂）→ 播放 / 暂停 / 继续 / 停止，琴键跟着声音实时按下
+- **自动播放**：顶栏选曲（小星星 / 欢乐颂，或导入的谱面）→ 播放 / 暂停 / 继续 / 停止，琴键跟着声音实时按下
 - **跟弹模式**：切到「跟弹」再播放，琴键上方落下音符块，自己按键去接——音高 + 时间双重判定（Perfect / Good / Miss），漏按也记 Miss
 - **延迟校准**：控制栏「延迟校准」入口，120 BPM 节拍落条 + 节拍音，按空格 8 次自动算出设备输入延迟并修正判定
 - **变速练习**：50%–100% 拖滑块，下落速度随 BPM 同步变慢，判定窗口仍按物理毫秒计算
@@ -43,10 +44,11 @@ npm run preview  # 预览构建产物
 
 | 文件 | 作用 |
 | --- | --- |
-| `start.bat` | 启动开发服务器并自动打开浏览器；首次运行会自动 `npm install`。**保持窗口开着**，关掉窗口就停止 |
+| `start.bat` | 启动开发服务器并自动打开浏览器。启动前会做**依赖检测**：`node_modules` 缺失、关键依赖包（`vite` / `vue` / `@tonejs/midi` / `@webmusic/score`）缺失、或 `package-lock.json` 与上次安装快照不一致时自动 `npm install`。**保持窗口开着**，关掉窗口就停止 |
 | `stop.bat` | 结束 5173–5178 端口上的开发服务器（窗口不小心关了、或想强制停掉时用） |
 
-两个脚本都以 UTF-8 + CRLF 保存，中文提示在 Windows 10/11 的 CMD 下能正常显示。
+两个 `.bat` 只是纯 ASCII 薄壳，实际逻辑在 `scripts/start.ps1` / `scripts/stop.ps1`（UTF-8 BOM）——
+cmd 批处理的中文字符会被块缓冲截断解析，PowerShell 无此问题且中文显示正常。
 
 浏览器首次需要一次用户手势（按键 / 点击）才能启动 `AudioContext`，这是浏览器的自动播放策略。
 
@@ -57,6 +59,7 @@ npm run preview  # 预览构建产物
 | 框架 | Vue 3（`<script setup>`）+ Vite + TypeScript（strict） |
 | 样式 | 原生 CSS（组件内 scoped） |
 | 音频 | 原生 Web Audio API；采样源为 AutoPiano 原版 mp3（`fetch` + `decodeAudioData`） |
+| 谱面解析 | 自研字符谱解析器；MIDI 用 [@tonejs/midi](https://www.npmjs.com/package/@tonejs/midi)，MusicXML / ABC 用 [@webmusic/score](https://www.npmjs.com/package/@webmusic/score) |
 | 测试 | Vitest（纯逻辑单测，不依赖浏览器） |
 | 包管理 | npm |
 
@@ -69,17 +72,16 @@ src/
   keyboard/   88 键几何布局、键盘映射表、键面标注（音名 / 唱名）
   components/ 钢琴键盘、音符频谱、控制台（页签 / 显示 / 声音 / 键位）、键盘映射图、开关、主题菜单
   theme/      外观主题（token 表、应用与持久化）
-  parser/     字符谱解析（字符表 + parseScore）
-  transport/  播放时间轴（权威时钟 + 前瞻调度）与唤醒器
-  game/       跟弹判定、延迟校准（纯函数）与下落音符画布
-  组件里还有键盘谱视图（ScoreScroller）与练习工具（变速 / 循环在 Transport）
+  parser/     多格式谱面解析：adapters/（字符谱 / MIDI / MusicXML / ABC 适配器）
+              + parseAny 统一入口 + 导入存档（importStore）
+  transport/  播放时间轴（权威时钟 + 前瞻调度 + 变速 / A-B 循环）与唤醒器
+  game/       跟弹判定、延迟校准、学弹推进（纯函数）与下落音符画布
+  组件里还有键盘谱视图（ScoreScroller）
   data/       内置示例谱面
   types/      共享类型（NoteEvent / KeyBinding / DeckTab）
 tests/        Vitest 单元测试
 docs/screenshots/  界面截图（PR 用）
 ```
-
-后续阶段会补上 `src/game/`（判定引擎）。
 
 ## 钢琴布局数值（对齐 AutoPiano）
 
@@ -198,7 +200,7 @@ docs/screenshots/  界面截图（PR 用）
 | 曲目 | 调性 | BPM | 说明 |
 | --- | --- | --- | --- |
 | 小星星 | C 大调 | 96 | 6 个乐句 + 结尾 C 大三和弦，演示和弦与延长 |
-| 欢乐颂 | C 大调 | 104 | 贝多芬主题，两段重复 |
+| 欢乐颂 | C 大调 | 104 | 贝多芬主题，完整四句（1=C 4/4，62 音） |
 
 ## 延迟校准（输入 Offset）
 
@@ -219,7 +221,7 @@ docs/screenshots/  界面截图（PR 用）
 
 ## 刻意练习工具（变速 / A-B 循环 / 键盘谱）
 
-控制栏「自动 / 跟弹」右侧一整排练习工具：
+顶栏「自动 / 跟弹 / 学弹」与曲目下拉右侧一排练习工具（播放行里还有速度滑块、进度条与 A-B 按钮）：
 
 **变速练习（50%–100%）**——滑块只改播放 BPM（`Transport.setTempo`，播放中重锚续播、拍位连续）。
 判定把「拍差 × 当前拍长」换算回**物理毫秒**再分档，所以 50% 速度下判定窗口一个毫秒都不变，
@@ -254,6 +256,9 @@ rAF 每帧从拍位推出「下一个未到的音」，滚动让播放指针停�
 ![刻意练习工具](docs/screenshots/practice-tools.png)
 
 ![变速与循环](docs/screenshots/practice-loop.gif)
+
+![学弹模式（音名谱 + 黄提示）](docs/screenshots/learn-mode.png)
+
 ## 多格式导入（解析适配器架构）
 
 `src/parser/adapters/` 下每个格式一个适配器，统一从 `parseAny(input, format?)` 进：
@@ -274,11 +279,15 @@ MuseScore、Audiveris 等工具转换为 **MIDI / MusicXML** 再导入。
 导入入口在顶栏「导入」按钮（**支持一次多选批量导入**）；导入的谱面进入曲目下拉的
 「导入的谱面」分组（标注 BPM），是**常驻列表**——切歌、刷新页面都不丢，
 自动播放、跟弹、学弹、变速、A-B 循环对它全部可用；点旁边的 × 移除选中的那条。
-导入文件存 localStorage（上限约 3.4MB，超出部分仅本次会话可用）。
+导入时按**文件内容判重**：同一份文件（哪怕改了文件名）重复导入会被跳过并在顶栏提示。
+导入文件以原始字节存 localStorage（上限约 3.4MB，超出部分仅本次会话可用），
+恢复时**重新解析**而非缓存结果——换键位表、解析器升级后自动按当前逻辑重算。
 
-## 跟弹判定（P3 进行中）
+![导入 MusicXML 跟弹播放](docs/screenshots/import-musicxml.png)
 
-控制栏把「自动 / 跟弹」二选一。跟弹模式下 Transport 只当节拍器（不发声，声音由用户按键发），
+## 跟弹判定
+
+顶栏把播放模式三选一：**自动 / 跟弹 / 学弹**。跟弹模式下 Transport 只当节拍器（不发声，声音由用户按键发），
 琴键上方出现下落音符画布，判定走 `src/game/judge.ts`——**纯函数模块**，不依赖 AudioContext / Vue：
 
 | \|偏差\| | 判定 |
@@ -313,9 +322,10 @@ MuseScore、Audiveris 等工具转换为 **MIDI / MusicXML** 再导入。
 
 ![跟弹模式](docs/screenshots/follow-notes.png)
 
-## 自动播放（控制栏右侧）
+## 自动播放
 
-选曲 → 播放：解析器把字符谱变成 `NoteEvent[]`，Transport 按绝对时刻把每个音交给引擎
+选曲（内置或导入）→ 播放：解析层把字符谱 / MIDI / MusicXML 统一变成 `NoteEvent[]`，
+Transport 按绝对时刻把每个音交给引擎
 （`onNote` → `PianoEngine.playNote(pitch, when, duration)`），琴键高亮由渲染循环驱动：
 
 - **高亮与声音同一时钟**：渲染循环（rAF）每帧从 `Transport.rawBeat`（就是 `AudioContext.currentTime`
@@ -485,7 +495,12 @@ npm run test
 - `tests/activeNotes.test.ts`：琴键高亮数据源（起拍 / 收拍边界、和弦、延长音、浮点容差、空谱）与集合浅比较
 - `tests/transport.test.ts`：拍位 ↔ 秒换算（60 / 80 / 90 / 120 BPM、可逆性）、前瞻窗边界、绝对时刻与唤醒时刻无关、
   迟到不吞音、不重复排程、和弦同刻、暂停 / 继续 / 停止 / 跳转 / 播完、参数校验
-- `tests/scoreParser.test.ts`：字符谱解析（音高与 startBeat、空白游程、休止 / 延长 / 和弦 / 转义 / 注释、非法字符与行列定位、strict 抛错、两首内置谱的音高与总时长）
+- `tests/scoreParser.test.ts`：字符谱解析（音高与 startBeat、空白游程、休止 / 延长 / 和弦 / 转义 / 注释、非法字符与行列定位、strict 抛错、两首内置谱的音高与总时长；文件名保留原样，模块本体已移至 `src/parser/adapters/textAdapter.ts`）
+- `tests/midiAdapter.test.ts` / `tests/musicXmlAdapter.test.ts`：MIDI 与 MusicXML / ABC / MXL 适配器
+  （拍位 / 音高 / 时值 / 力度、休止符拍位、字节输入、多段变速警告），配套 `tests/fixtures/minimal.mid` 与 `minimal.musicxml` 夹具
+- `tests/parseAny.test.ts`：统一入口（扩展名路由、魔数嗅探、未知扩展名报错、三格式同坐标系对比）
+- `tests/importStore.test.ts`：导入存档（多条读写、移除、超限截断、v1 单条迁移、损坏自清、无 storage 降级）
+- `tests/learn.test.ts`：学弹推进（组边界、按键匹配、提示计算）
 - `tests/themes.test.ts`：外观主题（id 唯一、token 填满且与 CSS 变量一一对应、`style.css` 默认值与 stage 一致、应用 / 未知 id 回落 / 持久化）
 - `tests/keyMapCustom.test.ts`：自定义绑定与空置（覆盖默认键位、绑黑键、空置压住默认、绑定优先于空置、非法条目过滤）
 - `tests/customKeymap.test.ts`：本地持久化（缺失降级、读回一致、损坏 JSON 兜底、条目校验）
@@ -497,20 +512,20 @@ Canvas 渲染与音频节点创建不做单测，验收方式见 PR 描述中的
 
 ## 阶段进度
 
-| 阶段 | 内容 | 分支 | 状态 |
+| 阶段 | 内容 | PR | 状态 |
 | --- | --- | --- | --- |
-| 0 | 仓库与脚手架 | `main` | 完成 |
-| 1 | 自由弹奏 | `main` | 完成 |
-| 2 | 谱面解析与自动播放 | 三个 PR（#8 + #9 + #10） | 完成（均已合并） |
-| 3 | 视觉跟弹与判定 | `feature/follow-play-core` + `feature/practice-tools` | 进行中（判定引擎、校准、练习工具已合并进 main） |
-| 4 | 变速与上方键盘谱 | `feature/practice-tools` | 待开始 |
-| 5 | 收尾 | `feature/polish` | 待开始 |
+| 1 | 自由弹奏 + 外观主题 | #6 等 | 完成 |
+| 2 | 谱面解析与自动播放（字符谱 + Transport + 联动） | #8 / #9 / #10 | 完成 |
+| 3 | 跟弹判定 + 延迟校准 | #11 / #12 | 完成 |
+| 4 | 刻意练习工具（变速 / A-B 循环 / 键盘谱 / 音名谱 / 黄提示 / 学弹） | #13 | 完成 |
+| 5 | 多格式导入（适配器架构：MIDI / MusicXML / ABC） | #15 | 完成 |
 
 ## 已知限制
 
 - 键盘默认只绑 C2–C7 的白键：全部黑键与 A0–B1、C♯7 以上没有默认键位，需要鼠标 / 触屏演奏，或在「键位」页自定义。
 - AutoPiano 采样的音色取决于原仓库文件，未做力度分层：力度只影响增益，不影响音色明暗。
 - 采样范围外（A0–B1、C♯7–C8）靠移调，音色会比原位采样略"薄"。
-- 声音面板只有「高音立式钢琴」真正可切换，其余 28 种是占位。
 - 自定义键位只存在当前浏览器（`localStorage`），换设备不跟随；暂不支持导出/导入。
+- 导入谱面的持久化同样只在当前浏览器（localStorage 上限约 3.4MB，超出部分仅会话内可用）。
+- 图片 / PDF 的 OMR 识别暂不支持（建议先转 MIDI / MusicXML，见「多格式导入」一节）。
 - 移动端为横向滚动的 88 键全键盘，窄屏下需要左右滑动。
