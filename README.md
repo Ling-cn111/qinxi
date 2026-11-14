@@ -18,6 +18,7 @@
 - **键盘谱视图**：琴键上方横向滚动的字符序列，可切**键帽字母 / 音名（C4）**，跟随判定着色；显示模式可切「只看下落 / 只看谱面 / 两者都看」
 - **下一音黄提示**：跟弹 / 学弹时「下一个要弹的音」的琴键亮黄（和弦整组一起亮）
 - **自主学弹**：「学弹」模式没有进度条与时钟，只显示谱面，按对当前音才往后走，错音只计数
+- **多格式导入**：播放栏「导入」按钮，支持 **MIDI（.mid）**、**MusicXML（.musicxml / .xml / 压缩包 .mxl）**、**ABC 记谱（.abc）** 和字符谱（.txt），解析出的谱面与内置曲走完全相同的 Transport / 判定引擎
 - 三套**外观主题**（舞台 / 赛博 / 中国红），右上角下拉切换并记住选择；只换背景与外壳，琴体不变
 
 > 参考项目：[AutoPiano 自由钢琴](https://www.autopiano.cn/)（[Wscats/piano](https://github.com/Wscats/piano)）。
@@ -253,6 +254,26 @@ rAF 每帧从拍位推出「下一个未到的音」，滚动让播放指针停�
 ![刻意练习工具](docs/screenshots/practice-tools.png)
 
 ![变速与循环](docs/screenshots/practice-loop.gif)
+## 多格式导入（解析适配器架构）
+
+`src/parser/adapters/` 下每个格式一个适配器，统一从 `parseAny(input, format?)` 进：
+按文件扩展名路由（无扩展名时嗅探 `MThd` / `PK` 魔数与 `<` 前缀），产出同一个
+`UniversalParseResult`（四分音符拍位 + MIDI 音高）—— Transport、判定引擎、
+下落画布、谱面视图对「谱面从哪来」一无所知。
+
+| 格式 | 扩展名 | 实现 | 说明 |
+| --- | --- | --- | --- |
+| 字符谱 | `.txt` | `textAdapter.ts`（原 scoreParser 原样包装） | 按当前键位表映射字符 → 音高 |
+| MIDI | `.mid` / `.midi` | `midiAdapter.ts`（[@tonejs/midi](https://www.npmjs.com/package/@tonejs/midi)） | 秒时间轴按首个速度换算拍位；多段变速按起始速度统一（会记警告）；打击乐轨与 88 键外音符丢弃 |
+| MusicXML | `.musicxml` / `.xml` / `.mxl` | `musicXmlAdapter.ts`（[@webmusic/score](https://www.npmjs.com/package/@webmusic/score) 的 `loadScore`） | 附点 / 三连音时值已由模型折算；休止符跳过但保留拍位 |
+| ABC 记谱 | `.abc` | `abcAdapter.ts`（同一 `loadScore` 管道） | 第三批（可选）顺手支持 |
+
+**暂不支持**：图片 / PDF 的 OMR（光学乐谱识别）。建议先把图片或 PDF 用
+MuseScore、Audiveris 等工具转换为 **MIDI / MusicXML** 再导入。
+
+导入入口在播放栏「导入」按钮；导入的谱面出现在曲目下拉里（标注 BPM），
+自动播放、跟弹、学弹、变速、A-B 循环对它全部可用。
+
 ## 跟弹判定（P3 进行中）
 
 控制栏把「自动 / 跟弹」二选一。跟弹模式下 Transport 只当节拍器（不发声，声音由用户按键发），
