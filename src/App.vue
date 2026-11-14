@@ -1164,6 +1164,54 @@ onBeforeUnmount(() => {
         <span class="brand__latin">QINXI</span>
       </div>
 
+      <!-- 播放模式 / 曲目 / 导入：贴在品牌右侧，一眼可及 -->
+      <div class="topbar__tools">
+        <div class="mode-switch" role="group" aria-label="播放模式">
+          <button
+            type="button"
+            :class="{ 'is-active': playMode === 'listen' }"
+            @click="playMode = 'listen'"
+          >自动</button>
+          <button
+            type="button"
+            :class="{ 'is-active': playMode === 'follow' }"
+            @click="playMode = 'follow'"
+          >跟弹</button>
+          <button
+            type="button"
+            :class="{ 'is-active': playMode === 'learn' }"
+            @click="playMode = 'learn'"
+          >学弹</button>
+        </div>
+        <select v-model="scoreId" class="player__select" aria-label="选择曲谱" :disabled="playState !== 'idle'">
+          <option v-for="item in BUILT_IN_SCORES" :key="item.id" :value="item.id">{{ item.title }}</option>
+          <option v-if="importedScore" :value="IMPORTED_SCORE_ID">
+            导入：{{ importedScore.title }}（{{ Math.round(importedScore.bpm) }} BPM）
+          </option>
+        </select>
+        <label
+          class="player__import"
+          title="导入 MIDI / MusicXML / MXL / ABC / 字符谱文件"
+        >
+          <input
+            type="file"
+            accept=".mid,.midi,.musicxml,.xml,.mxl,.abc,.txt"
+            aria-label="导入谱面文件"
+            @change="handleImportFile"
+          />
+          导入
+        </label>
+        <button
+          v-if="importedScore"
+          type="button"
+          class="player__import-clear"
+          title="移除导入谱面，回到内置曲目"
+          aria-label="移除导入谱面"
+          @click="clearImportedScore"
+        >×</button>
+        <span v-if="importMessage" class="player__import-msg" role="status">{{ importMessage }}</span>
+      </div>
+
       <div class="topbar__right">
         <span class="source">{{ sourceLabel }}<template v-if="loadedText"> {{ loadedText }}</template></span>
 
@@ -1217,51 +1265,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="tools">
-          <div class="player" role="group" aria-label="播放与跟弹">
-            <div class="mode-switch" role="group" aria-label="播放模式">
-              <button
-                type="button"
-                :class="{ 'is-active': playMode === 'listen' }"
-                @click="playMode = 'listen'"
-              >自动</button>
-              <button
-                type="button"
-                :class="{ 'is-active': playMode === 'follow' }"
-                @click="playMode = 'follow'"
-              >跟弹</button>
-              <button
-                type="button"
-                :class="{ 'is-active': playMode === 'learn' }"
-                @click="playMode = 'learn'"
-              >学弹</button>
-            </div>
-            <select v-model="scoreId" class="player__select" aria-label="选择曲谱" :disabled="playState !== 'idle'">
-              <option v-for="item in BUILT_IN_SCORES" :key="item.id" :value="item.id">{{ item.title }}</option>
-              <option v-if="importedScore" :value="IMPORTED_SCORE_ID">
-                导入：{{ importedScore.title }}（{{ Math.round(importedScore.bpm) }} BPM）
-              </option>
-            </select>
-            <label
-              class="player__import"
-              title="导入 MIDI / MusicXML / MXL / ABC / 字符谱文件"
-            >
-              <input
-                type="file"
-                accept=".mid,.midi,.musicxml,.xml,.mxl,.abc,.txt"
-                aria-label="导入谱面文件"
-                @change="handleImportFile"
-              />
-              导入
-            </label>
-            <button
-              v-if="importedScore"
-              type="button"
-              class="player__import-clear"
-              title="移除导入谱面，回到内置曲目"
-              aria-label="移除导入谱面"
-              @click="clearImportedScore"
-            >×</button>
-            <span v-if="importMessage" class="player__import-msg" role="status">{{ importMessage }}</span>
+          <div class="player" role="group" aria-label="播放控制">
             <label v-if="playMode !== 'learn'" class="player__speed" title="练习速度（判定窗口不随速度变化）">
               <input
                 v-model.number="speed"
@@ -1477,9 +1481,19 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  padding: 14px 24px;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 10px 24px;
   border-bottom: 1px solid rgba(var(--qin-w-rgb), 0.07);
+}
+
+/* 品牌 + 右侧信息之间的工具带：播放模式 / 曲目 / 导入 */
+.topbar__tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
 }
 
 .brand {
@@ -1848,11 +1862,14 @@ onBeforeUnmount(() => {
   color: rgb(var(--qin-danger-rgb));
 }
 
-/* 导入成功 / 失败的行内提示 */
+/* 导入状态提示：顶栏里限宽省略，不把布局挤开 */
 .player__import-msg {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11.5px;
   color: rgba(var(--qin-ink-rgb), 0.55);
-  white-space: nowrap;
 }
 
 .player__play {
