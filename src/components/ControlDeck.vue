@@ -35,6 +35,7 @@ const showHints = defineModel<boolean>('showHints', { required: true });
 const noteNames = defineModel<boolean>('noteNames', { required: true });
 const solfege = defineModel<boolean>('solfege', { required: true });
 const scoreView = defineModel<'falling' | 'sheet' | 'both'>('scoreView', { required: true });
+const scoreChar = defineModel<'char' | 'note'>('scoreChar', { required: true });
 const volume = defineModel<number>('volume', { required: true });
 const diagramMode = defineModel<'char' | 'note'>('diagramMode', { required: true });
 const editMode = defineModel<boolean>('editMode', { required: true });
@@ -99,6 +100,7 @@ const TABS = [
         v-model:note-names="noteNames"
         v-model:solfege="solfege"
         v-model:score-view="scoreView"
+        v-model:score-char="scoreChar"
       />
       <PanelSound
         v-else-if="tab === 'sound'"

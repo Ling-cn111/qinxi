@@ -27,6 +27,8 @@ const props = defineProps<{
   editMode?: boolean;
   /** 编辑态下已选中的音高 */
   editPitch?: number | null;
+  /** 「下一个要弹的音」黄色提示（跟弹 = 第一个未判定的组；学弹 = 当前待弹组） */
+  hintPitches?: ReadonlySet<number>;
 }>();
 
 const emit = defineEmits<{
@@ -70,6 +72,8 @@ const bandHint = computed(() => {
 const pressedClass = (pitch: number) => props.pressed.has(pitch) ? 'is-pressed' : '';
 const targetClass = (pitch: number) =>
   props.editPitch === pitch ? 'is-target' : '';
+const hintClass = (pitch: number) =>
+  props.hintPitches?.has(pitch) ? 'is-hint' : '';
 
 const onDown = (pitch: number, event: PointerEvent) => {
   event.preventDefault();
@@ -128,7 +132,7 @@ defineExpose({ scrollToViewport });
           :key="key.pitch"
           type="button"
           class="wkey"
-          :class="[pressedClass(key.pitch), targetClass(key.pitch)]"
+          :class="[pressedClass(key.pitch), targetClass(key.pitch), hintClass(key.pitch)]"
           :aria-label="`${noteNameOf(key.pitch)} 白键`"
           @pointerdown="onDown(key.pitch, $event)"
           @pointerup="emit('release', key.pitch)"
@@ -147,7 +151,7 @@ defineExpose({ scrollToViewport });
           :key="key.pitch"
           type="button"
           class="bkey"
-          :class="[pressedClass(key.pitch), targetClass(key.pitch)]"
+          :class="[pressedClass(key.pitch), targetClass(key.pitch), hintClass(key.pitch)]"
           :style="blackStyle(key)"
           :aria-label="`${noteNameOf(key.pitch)} 黑键`"
           @pointerdown="onDown(key.pitch, $event)"
@@ -336,6 +340,16 @@ defineExpose({ scrollToViewport });
   right: 0;
 }
 
+/* 「下一个要弹的音」黄提示：键面染暖黄 + 底部一圈黄光，按下态优先 */
+.wkey.is-hint:not(.is-pressed) {
+  background: linear-gradient(#fff6cf 10%, #ffe98d 92%, #f7d468 93%, #fff6cf 97%);
+  box-shadow: inset 0 -16px 14px -10px rgba(244, 197, 66, 0.85);
+}
+
+.wkey.is-hint.is-pressed {
+  box-shadow: inset 0 -16px 14px -10px rgba(244, 197, 66, 0.55);
+}
+
 /* ------------------------------------------------ AutoPiano: .bkey */
 .bkey {
   position: absolute;
@@ -369,6 +383,15 @@ defineExpose({ scrollToViewport });
     0 1px 0 rgba(0, 0, 0, 0.8),
     0 2px 2px rgba(0, 0, 0, 0.4),
     0 -1px 0 #000;
+}
+
+/* 黑键的黄提示：暗金键体 + 黄色底边，在黑漆面上也看得清 */
+.bkey.is-hint:not(.is-pressed) {
+  background: linear-gradient(-20deg, #6f5f1d, #4a3e10, #6f5f1d);
+  border-bottom-color: #e8c447;
+  box-shadow:
+    inset 0 -1px 2px rgba(255, 236, 150, 0.45),
+    0 2px 3px rgba(0, 0, 0, 0.4);
 }
 
 /* ---------------------------------------------------------------- 标注 */

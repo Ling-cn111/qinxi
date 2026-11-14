@@ -6,8 +6,10 @@ import UiToggle from './UiToggle.vue';
 const hints = defineModel<boolean>('hints', { required: true });
 const noteNames = defineModel<boolean>('noteNames', { required: true });
 const solfege = defineModel<boolean>('solfege', { required: true });
-/** 播放时的谱面视图：只看下落 / 只看键盘谱 / 两者都看 */
+/** 播放时的谱面视图：只看下落 / 只看谱面 / 两者都看 */
 const scoreView = defineModel<'falling' | 'sheet' | 'both'>('scoreView', { required: true });
+/** 谱面字符样式：键帽字母 / 音名（C4、A#5）—— 二者互斥显示 */
+const scoreChar = defineModel<'char' | 'note'>('scoreChar', { required: true });
 
 watch(noteNames, (on) => {
   if (on) solfege.value = false;
@@ -19,8 +21,13 @@ watch(solfege, (on) => {
 
 const viewOptions = [
   { value: 'falling', label: '只看下落' },
-  { value: 'sheet', label: '只看键盘谱' },
+  { value: 'sheet', label: '只看谱面' },
   { value: 'both', label: '两者都看' },
+] as const;
+
+const charOptions = [
+  { value: 'char', label: '键帽字母' },
+  { value: 'note', label: '音名（C4）' },
 ] as const;
 </script>
 
@@ -55,9 +62,25 @@ const viewOptions = [
       </button>
     </div>
 
+    <div class="view-switch view-switch--sub" role="radiogroup" aria-label="谱面字符">
+      <button
+        v-for="option in charOptions"
+        :key="option.value"
+        type="button"
+        class="view-switch__item"
+        :class="{ 'is-active': scoreChar === option.value }"
+        role="radio"
+        :aria-checked="scoreChar === option.value"
+        @click="scoreChar = option.value"
+      >
+        {{ option.label }}
+      </button>
+    </div>
+
     <p class="panel-desc">
-      跟弹播放时钢琴上方显示什么：「下落」是节奏大师式音符块，「键盘谱」是横向滚动的
-      键帽字符序列（带判定标注）。自动播放时键盘谱也会跟随高亮。
+      跟弹播放时钢琴上方显示什么：「下落」是节奏大师式音符块，「谱面」是横向滚动的
+      字符序列（带判定标注），字符可选键帽字母或音名（二者互斥）。
+      自动播放时谱面也会跟随高亮；「学弹」模式固定显示谱面。
     </p>
   </section>
 </template>
@@ -93,5 +116,10 @@ const viewOptions = [
 .view-switch__item.is-active {
   background: var(--qin-surface-active);
   color: var(--qin-accent-strong);
+}
+
+/* 谱面字符切换：第二行缩进一点，视觉上属于「谱面」的子选项 */
+.view-switch--sub {
+  margin-top: 8px;
 }
 </style>

@@ -1,34 +1,41 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { NoteEvent } from '@/types';
 import type { Grade } from '@/game/judge';
 
 /**
- * 键盘谱视图：把 NoteEvent[] 转成横向滚动的键帽字符序列。
+ * 谱面视图（键帽谱 / 音名谱共用）：把 NoteEvent[] 转成横向滚动的字符序列。
  *
  * - 与下落画布共享同一个 Transport 时钟（getBeat 每帧取拍位），滚动位置由
  *   「下一个未到的音」的下标推出，播放指针始终停在视口约 35% 处；
  * - 跟弹模式下 `judged` 传入判定表：已判字符按档位着色并标注 P / G / M；
  *   自动播放传 null，只有「正在响」的高亮；
+ * - 学弹模式传 `learnCursor`（≥ 0）：不走时钟，指针就是「下一个待弹的音」，
+ *   当前组（同拍位）整体高亮，组内弹过的按档位着色，组前的全部置灰；
  * - DOM 状态类由 rAF 直接操作（不走 Vue 响应式）：滚动条上每帧只做
  *   O(字符数) 的 classList diff，字符集合本身交给 v-for 渲染。
  */
 const props = defineProps<{
   /** 按 startBeat 升序的谱面音符 */
   notes: NoteEvent[];
-  /** 与 notes 一一对应的显示字符（键帽字母，反查不到用 '·'） */
+  /** 与 notes 一一对应的显示字符（键帽字母或音名，反查不到用 '·'） */
   chars: string[];
   /** 判定表（音符下标 → 档位）；自动播放时为 null */
   judged: ReadonlyMap<number, Grade> | null;
   /** 拍位来源（与 Transport / 下落画布同源） */
   getBeat: () => number;
   playing: boolean;
+  /** 单个字符格的宽度（px）：键帽 26，音名（C#4 这类三字符）36 */
+  cellWidth?: number;
+  /** 学弹模式指针（下一个待弹音的下标）；-1 / 省略 = 非学弹，按时钟走 */
+  learnCursor?: number;
 }>();
 
-/** 单个字符格的宽度（px），和弦 / 密集音自然连排 */
-const CELL_PX = 26;
 /** 播放指针在视口中的位置比例 */
 const LEAD_RATIO = 0.35;
+
+/** 字符格宽度：组件 prop 带默认值，paint / 模板统一从这里取 */
+const cell = computed(() => props.cellWidth ?? 26);
 
 const viewport = ref<HTMLElement | null>(null);
 const strip = ref<HTMLElement | null>(null);
@@ -58,28 +65,39 @@ function paint(): void {
   const st = strip.value;
   if (!vp || !st) return;
 
+  const learn = props.learnCursor ?? -1;
   const beat = props.getBeat();
-  const active = activeIndexAt(beat);
-  const offset = Math.max(0, active * CELL_PX - vp.clientWidth * LEAD_RATIO);
+  // 学弹：指针就是 learnCursor；普通播放 / 自动：按时钟推出
+  const active = learn >= 0 ? learn : activeIndexAt(beat);
+  const offset = Math.max(0, active * cell.value - vp.clientWidth * LEAD_RATIO);
   if (Math.abs(offset - lastOffset) > 0.5) {
     st.style.transform = `translateX(${-offset}px)`;
     lastOffset = offset;
   }
 
   // 状态戳：指针没动、判定也没变时就整帧跳过
-  const stamp = `${active}|${props.judged ? props.judged.size : -1}`;
+  const stamp = `${learn}|${active}|${props.judged ? props.judged.size : -1}`;
   if (stamp === lastStamp) return;
   lastStamp = stamp;
 
+  const learnBeat = learn >= 0 ? (props.notes[learn]?.startBeat ?? Number.NaN) : Number.NaN;
   for (let index = 0; index < cells.value.length; index += 1) {
-    const cell = cells.value[index];
+    const cellEl = cells.value[index];
     const note = props.notes[index];
-    if (!cell || !note) continue;
+    if (!cellEl || !note) continue;
     const grade = props.judged?.get(index);
-    // 已判定的按档位着色；只有「还没判、此刻正在响」的音才做高亮
-    cell.classList.toggle('is-active', !grade && isNowPlaying(note, beat));
-    cell.classList.toggle('is-past', note.startBeat + Math.max(note.durationBeats, 0.05) <= beat);
-    cell.dataset.grade = grade ?? '';
+    if (learn >= 0) {
+      // 学弹：当前组（同拍位）整体亮着 —— 弹过的按档位着色，没弹的等手；
+      // 组之前的全部置灰，组之后保持未到状态
+      const inGroup = note.startBeat === learnBeat;
+      cellEl.classList.toggle('is-active', inGroup);
+      cellEl.classList.toggle('is-past', index < learn);
+    } else {
+      // 已判定的按档位着色；只有「还没判、此刻正在响」的音才做高亮
+      cellEl.classList.toggle('is-active', !grade && isNowPlaying(note, beat));
+      cellEl.classList.toggle('is-past', note.startBeat + Math.max(note.durationBeats, 0.05) <= beat);
+    }
+    cellEl.dataset.grade = grade ?? '';
   }
 }
 
@@ -101,7 +119,7 @@ function stopLoop(): void {
 }
 
 watch(
-  () => [props.playing, props.notes],
+  () => [props.playing, props.notes, props.learnCursor, props.cellWidth],
   () => {
     lastStamp = '';
     lastOffset = -1;
@@ -132,8 +150,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="viewport" class="score-scroller" role="log" aria-label="键盘谱">
-    <div ref="strip" class="score-scroller__strip" :style="{ width: `${notes.length * 26 + 80}px` }">
+  <div
+    ref="viewport"
+    class="score-scroller"
+    role="log"
+    aria-label="谱面"
+    :style="{ '--cell-w': `${cell}px` }"
+  >
+    <div ref="strip" class="score-scroller__strip" :style="{ width: `${notes.length * cell + 80}px` }">
       <span
         v-for="(note, index) in notes"
         :key="note.id"
@@ -167,7 +191,8 @@ onBeforeUnmount(() => {
 
 .score-scroller__cell {
   position: relative;
-  flex: 0 0 26px;
+  flex: 0 0 var(--cell-w, 26px);
+  width: var(--cell-w, 26px);
   display: flex;
   align-items: center;
   justify-content: center;
