@@ -12,6 +12,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@tonejs/midi": "^2.0.28",
+    "@webmusic/score": "^0.2.0",
     "vue": "^3.5.18"
   },
   "devDependencies": {

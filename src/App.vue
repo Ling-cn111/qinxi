@@ -32,6 +32,14 @@ import {
 } from '@/keyboard/keymapSchemes';
 import { midiToName } from '@/audio/note';
 import { BUILT_IN_SCORES, DEFAULT_SCORE_ID, findScore, loadScore } from '@/data/scores';
+import { parseAny } from '@/parser/parseAny';
+import {
+  base64ToBytes,
+  bytesToBase64,
+  loadStoredImports,
+  saveStoredImports,
+  type StoredImport,
+} from '@/parser/importStore';
 import { activeNotesAt, samePitchSet } from '@/transport/activeNotes';
 import { Transport, type TransportSnapshot } from '@/transport/transport';
 import { collectMissed, judgeHit, type Grade, type Judgment } from '@/game/judge';
@@ -223,6 +231,29 @@ const emptyJudged = new Map<number, Grade>();
 // ---------------------------------------------------------------- 自动播放 / 跟弹
 /** 选中的内置曲谱 */
 const scoreId = ref<string>(DEFAULT_SCORE_ID);
+
+/** 导入谱面 select option 的 value 前缀（value = `import:<id>`） */
+const IMPORT_PREFIX = 'import:';
+/**
+ * 用户导入的外部谱面**常驻列表**（.mid / .musicxml / .mxl / .abc / .txt，
+ * 经 parseAny 统一解析）。切歌不丢、刷新自动恢复，只有点 × 才移除；
+ * 存档保存原始文件（base64），恢复时重新解析。
+ */
+interface ImportEntry {
+  id: string;
+  /** 原始文件名（扩展名决定格式，持久化用） */
+  name: string;
+  /** 显示名（去扩展名） */
+  title: string;
+  bpm: number;
+  notes: NoteEvent[];
+  /** 原始文件 base64（持久化用） */
+  data: string;
+}
+const importEntries = ref<ImportEntry[]>([]);
+let importSeq = 0;
+/** 导入状态提示（成功 / 失败），下一次导入或移除时覆盖 */
+const importMessage = ref('');
 /** idle = 没在播；playing / paused 对应 Transport 的状态 */
 const playState = ref<'idle' | 'playing' | 'paused'>('idle');
 /**
@@ -497,28 +528,179 @@ function startRenderLoop(): void {
   renderRafId = playMode.value === 'follow' ? requestAnimationFrame(renderFollowLoop) : requestAnimationFrame(renderAutoplayKeys);
 }
 
+/**
+ * 当前生效的谱面来源：导入谱优先，否则解析选中的内置曲。
+ * 三种播放模式（自动 / 跟弹 / 学弹）都从这里拿音符 —— 谱面从哪来对它们透明。
+ */
+function resolveScoreSource(): { title: string; bpmBase: number; notes: NoteEvent[]; warnings: string[] } | null {
+  if (scoreId.value.startsWith(IMPORT_PREFIX)) {
+    const id = scoreId.value.slice(IMPORT_PREFIX.length);
+    const entry = importEntries.value.find((item) => item.id === id);
+    if (!entry) return null;
+    return { title: entry.title, bpmBase: entry.bpm, notes: entry.notes, warnings: [] };
+  }
+  const score = findScore(scoreId.value);
+  if (!score) return null;
+  const parsed = loadScore(score, baseKeyMap.value);
+  return {
+    title: score.title,
+    bpmBase: score.bpm,
+    notes: parsed.notes,
+    warnings: parsed.warnings.map((warning) => `第 ${warning.line} 行第 ${warning.column} 列 ${warning.message}`),
+  };
+}
+
+/**
+ * 导入外部谱面文件（支持**批量多选**）—— 全部走 parseAny 统一入口：
+ * .mid / .midi → @tonejs/midi；.musicxml / .xml / .mxl / .abc → @webmusic/score；
+ * .txt → 字符谱（按当前键位表映射）。解析出的 NoteEvent[] 与内置谱走完全相同的
+ * Transport / 判定引擎 / 下落画布 / 谱面视图。
+ *
+ * 导入的谱面进入**常驻列表**：切歌不丢、刷新自动恢复；单个文件解析失败
+ * 不影响同批其他文件。
+ */
+async function handleImportFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  input.value = ''; // 清空以便重复导入同一批文件
+  if (files.length === 0) return;
+  if (playState.value !== 'idle') stopPlayback();
+
+  let ok = 0;
+  let skippedDupes = 0;
+  let lastId = '';
+  for (const file of files) {
+    try {
+      const bytes = await file.arrayBuffer();
+      const data = bytesToBase64(new Uint8Array(bytes));
+      // 按内容判重：同一份文件（哪怕改了文件名）只保留一条
+      const dupe = importEntries.value.find((entry) => entry.data === data);
+      if (dupe) {
+        skippedDupes += 1;
+        console.info(`[琴习·导入] ${file.name} 与「${dupe.title}」内容相同，跳过`);
+        continue;
+      }
+      const result = await parseAny({ bytes, fileName: file.name, keyMap: baseKeyMap.value });
+      const entry: ImportEntry = {
+        id: `i${Date.now().toString(36)}_${importSeq++}`,
+        name: file.name,
+        title: file.name.replace(/\.[^.]+$/, ''),
+        bpm: result.bpm,
+        notes: result.notes,
+        data,
+      };
+      importEntries.value.push(entry);
+      lastId = entry.id;
+      ok += 1;
+      for (const warning of result.warnings) {
+        console.warn(`[琴习·导入] ${warning}`);
+      }
+      console.info(
+        `[琴习·导入] ${file.name}（${result.format}）：${result.notes.length} 音 · ${Math.round(result.bpm)} BPM`,
+      );
+    } catch (error) {
+      console.error('[琴习·导入] 解析失败：', file.name, error);
+    }
+  }
+
+  // 持久化整份列表（原始文件 base64，恢复时重新解析）；超限时从后往前丢
+  const storedList: StoredImport[] = importEntries.value.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    data: entry.data,
+    encoding: 'base64',
+  }));
+  const persisted = saveStoredImports(storedList);
+  if (persisted < storedList.length) {
+    console.warn(
+      `[琴习·导入] 谱面总量超出 localStorage 上限：仅持久化前 ${persisted}/${storedList.length} 个，其余仅本次会话可用`,
+    );
+  }
+
+  if (ok > 0) {
+    importMessage.value =
+      skippedDupes > 0 ? `已导入 ${ok} 个，跳过 ${skippedDupes} 个重复文件` : '';
+    scoreId.value = IMPORT_PREFIX + lastId; // 选中本批最后一个
+  } else if (skippedDupes > 0) {
+    importMessage.value = `跳过 ${skippedDupes} 个重复文件（内容已存在）`;
+  } else {
+    importMessage.value = '导入失败：没有可识别的谱面文件';
+  }
+}
+
+/** 移除当前选中的导入谱面（持久化的一份同步重写），回到内置曲目 */
+function removeSelectedImport(): void {
+  if (!scoreId.value.startsWith(IMPORT_PREFIX)) return;
+  const id = scoreId.value.slice(IMPORT_PREFIX.length);
+  importEntries.value = importEntries.value.filter((entry) => entry.id !== id);
+  saveStoredImports(
+    importEntries.value.map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      data: entry.data,
+      encoding: 'base64' as const,
+    })),
+  );
+  scoreId.value = DEFAULT_SCORE_ID;
+}
+
+/**
+ * 开局恢复全部导入谱面：从 localStorage 取回原始文件重新解析
+ * （不是反序列化解析结果）—— 键位表变了、解析器升级了，都会按当前逻辑重算。
+ * 单条恢复失败（文件损坏 / 格式不再支持）就丢弃该条并重写存档，不阻塞启动。
+ */
+async function restoreStoredImports(): Promise<void> {
+  const stored = loadStoredImports();
+  if (stored.length === 0) return;
+  const entries: ImportEntry[] = [];
+  const kept: StoredImport[] = [];
+  for (const item of stored) {
+    try {
+      const bytes = item.encoding === 'base64'
+        ? base64ToBytes(item.data)
+        : new TextEncoder().encode(item.data);
+      const result = await parseAny({ bytes, fileName: item.name, keyMap: baseKeyMap.value });
+      entries.push({
+        id: item.id,
+        name: item.name,
+        title: item.name.replace(/\.[^.]+$/, ''),
+        bpm: result.bpm,
+        notes: result.notes,
+        data: item.data,
+      });
+      kept.push(item);
+      console.info(
+        `[琴习·导入] 已恢复「${item.name}」：${result.notes.length} 音 · ${Math.round(result.bpm)} BPM`,
+      );
+    } catch (error) {
+      console.warn(`[琴习·导入] 「${item.name}」恢复失败，已从存档移除：`, error);
+    }
+  }
+  importEntries.value = entries;
+  saveStoredImports(kept);
+}
+
 function startPlayback(): void {
   if (playMode.value === 'learn') {
     startLearn();
     return;
   }
-  const score = findScore(scoreId.value);
-  if (!score) return;
+  const source = resolveScoreSource();
+  if (!source) return;
   if (editMode.value) exitEdit();
   // 用户手势里启动音频上下文；AudioContext 在 start() 里同步创建，engine.now() 随即可用
   void engine.start();
-  const parsed = loadScore(score, baseKeyMap.value);
-  if (parsed.warnings.length > 0) {
-    console.warn('[琴习] 谱面解析有警告：', parsed.warnings);
+  if (source.warnings.length > 0) {
+    console.warn('[琴习] 谱面解析有警告：', source.warnings);
   }
-  currentNotes = parsed.notes;
-  currentNotesRef.value = parsed.notes;
-  followBpm.value = (score.bpm * speed.value) / 100;
+  currentNotes = source.notes;
+  currentNotesRef.value = source.notes;
+  followBpm.value = (source.bpmBase * speed.value) / 100;
   resetFollowProgress();
   // 空闲时用户可能拖过进度条：记住落点，装谱后回到那里（「拖到哪就从哪播」）
   // （beat getter 在非播放态返回暂停停留点；播放中不会走进 startPlayback）
   const resumeBeat = transport.beat;
-  transport.load(parsed.notes, { bpm: followBpm.value });
+  transport.load(source.notes, { bpm: followBpm.value });
   // 死磕场景：停止 / 换播放后再播，循环点仍然保留（load 会清 transport 侧，这里重挂）
   if (loopA.value !== null && loopB.value !== null) {
     try {
@@ -540,27 +722,26 @@ function startPlayback(): void {
  * 按对当前组（和弦要弹满）指针才推到下一组 —— 快慢完全由学习者掌握。
  */
 function startLearn(): void {
-  const score = findScore(scoreId.value);
-  if (!score) return;
+  const source = resolveScoreSource();
+  if (!source) return;
   if (editMode.value) exitEdit();
   void engine.start();
-  const parsed = loadScore(score, baseKeyMap.value);
-  if (parsed.warnings.length > 0) {
-    console.warn('[琴习] 谱面解析有警告：', parsed.warnings);
+  if (source.warnings.length > 0) {
+    console.warn('[琴习] 谱面解析有警告：', source.warnings);
   }
-  currentNotes = parsed.notes;
-  currentNotesRef.value = parsed.notes;
-  followBpm.value = (score.bpm * speed.value) / 100;
+  currentNotes = source.notes;
+  currentNotesRef.value = source.notes;
+  followBpm.value = (source.bpmBase * speed.value) / 100;
   resetFollowProgress();
   learnWrong.value = 0;
   learnDone.value = 0;
   // 只装谱统一状态（清循环 / 归零），学弹全程不 play
-  transport.load(parsed.notes, { bpm: followBpm.value });
+  transport.load(source.notes, { bpm: followBpm.value });
   learnCursor.value = 0;
   updateLearnHints();
   followSummary.value = '';
   playState.value = 'playing';
-  console.info(`[琴习·学弹] 开始「${score.title}」：共 ${parsed.notes.length} 音，按对当前音才往后走`);
+  console.info(`[琴习·学弹] 开始「${source.title}」：共 ${source.notes.length} 音，按对当前音才往后走`);
 }
 
 /** 学弹的下一音提示：当前组里还没弹的音一起亮 */
@@ -746,9 +927,9 @@ const loopTrackStyle = computed(() => {
   return undefined;
 });
 
-// 换曲目：正在播/暂停中都先停，避免「暂停在 A 曲第 3 拍、切到 B 曲接着放」的怪状态
-watch(scoreId, () => {
-  if (playState.value !== 'idle') stopPlayback();
+// 换曲目：正在播/暂停中都先停，避免「暂停在 A 曲第 3 拍、切到 B 曲接着放」的怪状态。
+// 导入谱面是常驻列表，切歌不清除——只有点 ×（removeSelectedImport）才移除。
+watch(scoreId, () => {  if (playState.value !== 'idle') stopPlayback();
 });
 
 // 换模式：正在播就先停（三种模式的发声与推进方式完全不同，不能热切）
@@ -1073,6 +1254,8 @@ onMounted(() => {
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onBlur);
+  // 上次导入的谱面恢复回来（异步：解析完自动出现在曲目下拉里）
+  void restoreStoredImports();
 });
 
 onBeforeUnmount(() => {
@@ -1094,6 +1277,57 @@ onBeforeUnmount(() => {
       <div class="brand">
         <span class="brand__name">琴习</span>
         <span class="brand__latin">QINXI</span>
+      </div>
+
+      <!-- 播放模式 / 曲目 / 导入：贴在品牌右侧，一眼可及 -->
+      <div class="topbar__tools">
+        <div class="mode-switch" role="group" aria-label="播放模式">
+          <button
+            type="button"
+            :class="{ 'is-active': playMode === 'listen' }"
+            @click="playMode = 'listen'"
+          >自动</button>
+          <button
+            type="button"
+            :class="{ 'is-active': playMode === 'follow' }"
+            @click="playMode = 'follow'"
+          >跟弹</button>
+          <button
+            type="button"
+            :class="{ 'is-active': playMode === 'learn' }"
+            @click="playMode = 'learn'"
+          >学弹</button>
+        </div>
+        <select v-model="scoreId" class="player__select" aria-label="选择曲谱" :disabled="playState !== 'idle'">
+          <option v-for="item in BUILT_IN_SCORES" :key="item.id" :value="item.id">{{ item.title }}</option>
+          <optgroup v-if="importEntries.length > 0" label="导入的谱面">
+            <option v-for="entry in importEntries" :key="entry.id" :value="IMPORT_PREFIX + entry.id">
+              {{ entry.title }}（{{ Math.round(entry.bpm) }} BPM）
+            </option>
+          </optgroup>
+        </select>
+        <label
+          class="player__import"
+          title="导入 MIDI / MusicXML / MXL / ABC / 字符谱文件（可一次选多个）"
+        >
+          <input
+            type="file"
+            accept=".mid,.midi,.musicxml,.xml,.mxl,.abc,.txt"
+            aria-label="导入谱面文件（可多选）"
+            multiple
+            @change="handleImportFile"
+          />
+          导入
+        </label>
+        <button
+          v-if="scoreId.startsWith(IMPORT_PREFIX)"
+          type="button"
+          class="player__import-clear"
+          title="移除当前选中的导入谱面"
+          aria-label="移除当前选中的导入谱面"
+          @click="removeSelectedImport"
+        >×</button>
+        <span v-if="importMessage" class="player__import-msg" role="status">{{ importMessage }}</span>
       </div>
 
       <div class="topbar__right">
@@ -1149,27 +1383,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="tools">
-          <div class="player" role="group" aria-label="播放与跟弹">
-            <div class="mode-switch" role="group" aria-label="播放模式">
-              <button
-                type="button"
-                :class="{ 'is-active': playMode === 'listen' }"
-                @click="playMode = 'listen'"
-              >自动</button>
-              <button
-                type="button"
-                :class="{ 'is-active': playMode === 'follow' }"
-                @click="playMode = 'follow'"
-              >跟弹</button>
-              <button
-                type="button"
-                :class="{ 'is-active': playMode === 'learn' }"
-                @click="playMode = 'learn'"
-              >学弹</button>
-            </div>
-            <select v-model="scoreId" class="player__select" aria-label="选择曲谱" :disabled="playState !== 'idle'">
-              <option v-for="item in BUILT_IN_SCORES" :key="item.id" :value="item.id">{{ item.title }}</option>
-            </select>
+          <div class="player" role="group" aria-label="播放控制">
             <label v-if="playMode !== 'learn'" class="player__speed" title="练习速度（判定窗口不随速度变化）">
               <input
                 v-model.number="speed"
@@ -1385,9 +1599,19 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  padding: 14px 24px;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 10px 24px;
   border-bottom: 1px solid rgba(var(--qin-w-rgb), 0.07);
+}
+
+/* 品牌 + 右侧信息之间的工具带：播放模式 / 曲目 / 导入 */
+.topbar__tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
 }
 
 .brand {
@@ -1712,6 +1936,58 @@ onBeforeUnmount(() => {
 .player__select option {
   background: var(--qin-surface-2);
   color: rgb(var(--qin-ink-rgb));
+}
+
+/* 导入按钮：label 包住隐藏的 file input，整体当一个按钮用 */
+.player__import {
+  position: relative;
+  overflow: hidden;
+  padding: 4px 10px;
+  border: 1px dashed rgba(var(--qin-w-rgb), 0.28);
+  border-radius: 2px;
+  color: rgba(var(--qin-ink-rgb), 0.66);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.player__import:hover {
+  border-color: rgba(var(--qin-accent-rgb), 0.55);
+  color: rgba(var(--qin-ink-rgb), 0.92);
+}
+
+.player__import input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 移除导入谱面的 × */
+.player__import-clear {
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: rgba(var(--qin-ink-rgb), 0.45);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.player__import-clear:hover {
+  color: rgb(var(--qin-danger-rgb));
+}
+
+/* 导入状态提示：顶栏里限宽省略，不把布局挤开 */
+.player__import-msg {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: rgba(var(--qin-ink-rgb), 0.55);
 }
 
 .player__play {

@@ -1,4 +1,4 @@
-import { parseScore, type ParseResult } from '@/parser/scoreParser';
+import { parseScore, type ParseResult } from '@/parser/adapters/textAdapter';
 import type { PianoKeyMap } from '@/keyboard/keyMap';
 
 /**

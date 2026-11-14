@@ -36,6 +36,12 @@ const LEAD_RATIO = 0.35;
 
 /** 字符格宽度：组件 prop 带默认值，paint / 模板统一从这里取 */
 const cell = computed(() => props.cellWidth ?? 26);
+/**
+ * 字符格步进间距 = 格宽 + strip 的 gap（2px）。
+ * 位移公式必须用「步进」而不是裸格宽：曾因漏算 margin/gap 导致每个音符
+ * 漂移 2px，Rush E（1755 音）播到中段指示区累计偏出 3500px 飞出屏幕。
+ */
+const PITCH = computed(() => cell.value + 2);
 
 const viewport = ref<HTMLElement | null>(null);
 const strip = ref<HTMLElement | null>(null);
@@ -69,7 +75,8 @@ function paint(): void {
   const beat = props.getBeat();
   // 学弹：指针就是 learnCursor；普通播放 / 自动：按时钟推出
   const active = learn >= 0 ? learn : activeIndexAt(beat);
-  const offset = Math.max(0, active * cell.value - vp.clientWidth * LEAD_RATIO);
+  const pitch = PITCH.value;
+  const offset = Math.max(0, active * pitch - vp.clientWidth * LEAD_RATIO);
   if (Math.abs(offset - lastOffset) > 0.5) {
     st.style.transform = `translateX(${-offset}px)`;
     lastOffset = offset;
@@ -157,7 +164,7 @@ onBeforeUnmount(() => {
     aria-label="谱面"
     :style="{ '--cell-w': `${cell}px` }"
   >
-    <div ref="strip" class="score-scroller__strip" :style="{ width: `${notes.length * cell + 80}px` }">
+    <div ref="strip" class="score-scroller__strip" :style="{ width: `${notes.length * cell + Math.max(notes.length - 1, 0) * 2 + 80}px` }">
       <span
         v-for="(note, index) in notes"
         :key="note.id"
@@ -185,6 +192,7 @@ onBeforeUnmount(() => {
 .score-scroller__strip {
   display: flex;
   align-items: center;
+  gap: 2px;
   height: 100%;
   will-change: transform;
 }
@@ -197,7 +205,6 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   height: 30px;
-  margin: 0 1px;
   border-radius: 3px;
   background: rgba(var(--qin-w-rgb), 0.06);
   border: 1px solid rgba(var(--qin-w-rgb), 0.1);
@@ -207,11 +214,10 @@ onBeforeUnmount(() => {
   transition: background 90ms linear, color 90ms linear;
 }
 
-/* 和弦的后续成员不重复画左边框，视觉上贴成一组 */
+/* 和弦的后续成员去掉左边框圆角，视觉上与前一个音贴成一组（间距仍走统一 gap） */
 .score-scroller__cell.is-chord-gap {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
-  margin-left: 0;
 }
 
 .score-scroller__cell.is-active {

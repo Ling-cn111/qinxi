@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PianoKeyMap } from '@/keyboard/keyMap';
 import { normalizeKeyChar } from '@/parser/chars';
-import { parseScore, ScoreParseError } from '@/parser/scoreParser';
+import { parseScore, ScoreParseError } from '@/parser/adapters/textAdapter';
 import { BUILT_IN_SCORES, findScore, loadScore } from '@/data/scores';
 
 /** 默认键位表（C2 起）：`g`=C4(60) `h`=D4(62) `j`=E4(64) `k`=F4(65) `l`=G4(67) `;`=A4(69) */

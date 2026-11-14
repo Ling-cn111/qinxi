@@ -1,6 +1,6 @@
 import type { PianoKeyMap } from '@/keyboard/keyMap';
 import type { NoteEvent } from '@/types';
-import { normalizeKeyChar } from './chars';
+import { normalizeKeyChar } from '../chars';
 
 /**
  * AutoPiano / VirtualPiano 风格的字符谱解析器。
@@ -317,3 +317,48 @@ export function parseScore(text: string, options: ParseOptions): ParseResult {
     restSteps,
   };
 }
+
+// ============================================================================
+// 适配器接口包装（P5）：上面的 parseScore 逻辑一字未动，
+// 只在外面套一层统一的 UniversalParseResult 壳，接进 parseAny 体系。
+// ============================================================================
+
+import type { FormatAdapter, ParseAnyInput, UniversalParseResult } from './types';
+
+/** 字符谱没有速度信息：导入字符谱文件时 Transport 用这个默认值 */
+export const DEFAULT_TEXT_BPM = 96;
+
+/**
+ * 字符谱 → 统一解析结果。
+ * `keyMap` 决定字符 → 音高的映射（应传「默认布局」的表，别传跟随视口的那张）。
+ * 解析警告（无法识别的字符等）转成统一 warnings 文本，不抛错 —— 与原行为一致。
+ */
+export function parseTextScore(text: string, keyMap: PianoKeyMap): UniversalParseResult {
+  const result = parseScore(text, { keyMap });
+  return {
+    format: 'text',
+    title: null,
+    bpm: DEFAULT_TEXT_BPM,
+    notes: result.notes,
+    warnings: result.warnings.map(
+      (warning) => `第 ${warning.line} 行第 ${warning.column} 列 ${warning.message}`,
+    ),
+  };
+}
+
+export const textAdapter: FormatAdapter = {
+  id: 'text',
+  extensions: ['.txt'],
+  parse: async (input: ParseAnyInput): Promise<UniversalParseResult> => {
+    const text =
+      input.text ??
+      (input.bytes !== undefined
+        ? new TextDecoder('utf-8').decode(
+            input.bytes instanceof Uint8Array ? input.bytes : new Uint8Array(input.bytes),
+          )
+        : undefined);
+    if (text === undefined) throw new TypeError('字符谱解析需要文本输入（text）');
+    if (!input.keyMap) throw new TypeError('字符谱解析需要 keyMap（字符 → 音高映射表）');
+    return parseTextScore(text, input.keyMap);
+  },
+};
