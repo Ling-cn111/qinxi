@@ -36,9 +36,9 @@ import { parseAny } from '@/parser/parseAny';
 import {
   base64ToBytes,
   bytesToBase64,
-  clearStoredImport,
-  loadStoredImport,
-  saveStoredImport,
+  loadStoredImports,
+  saveStoredImports,
+  type StoredImport,
 } from '@/parser/importStore';
 import { activeNotesAt, samePitchSet } from '@/transport/activeNotes';
 import { Transport, type TransportSnapshot } from '@/transport/transport';
@@ -232,10 +232,26 @@ const emptyJudged = new Map<number, Grade>();
 /** 选中的内置曲谱 */
 const scoreId = ref<string>(DEFAULT_SCORE_ID);
 
-/** 导入谱面在 select 里的占位 option value */
-const IMPORTED_SCORE_ID = '__imported__';
-/** 用户导入的外部谱面（.mid / .musicxml / .mxl / .abc / .txt，经 parseAny 统一解析） */
-const importedScore = shallowRef<{ title: string; bpm: number; notes: NoteEvent[] } | null>(null);
+/** 导入谱面 select option 的 value 前缀（value = `import:<id>`） */
+const IMPORT_PREFIX = 'import:';
+/**
+ * 用户导入的外部谱面**常驻列表**（.mid / .musicxml / .mxl / .abc / .txt，
+ * 经 parseAny 统一解析）。切歌不丢、刷新自动恢复，只有点 × 才移除；
+ * 存档保存原始文件（base64），恢复时重新解析。
+ */
+interface ImportEntry {
+  id: string;
+  /** 原始文件名（扩展名决定格式，持久化用） */
+  name: string;
+  /** 显示名（去扩展名） */
+  title: string;
+  bpm: number;
+  notes: NoteEvent[];
+  /** 原始文件 base64（持久化用） */
+  data: string;
+}
+const importEntries = ref<ImportEntry[]>([]);
+let importSeq = 0;
 /** 导入状态提示（成功 / 失败），下一次导入或移除时覆盖 */
 const importMessage = ref('');
 /** idle = 没在播；playing / paused 对应 Transport 的状态 */
@@ -517,9 +533,11 @@ function startRenderLoop(): void {
  * 三种播放模式（自动 / 跟弹 / 学弹）都从这里拿音符 —— 谱面从哪来对它们透明。
  */
 function resolveScoreSource(): { title: string; bpmBase: number; notes: NoteEvent[]; warnings: string[] } | null {
-  const imported = importedScore.value;
-  if (imported) {
-    return { title: imported.title, bpmBase: imported.bpm, notes: imported.notes, warnings: [] };
+  if (scoreId.value.startsWith(IMPORT_PREFIX)) {
+    const id = scoreId.value.slice(IMPORT_PREFIX.length);
+    const entry = importEntries.value.find((item) => item.id === id);
+    if (!entry) return null;
+    return { title: entry.title, bpmBase: entry.bpm, notes: entry.notes, warnings: [] };
   }
   const score = findScore(scoreId.value);
   if (!score) return null;
@@ -533,82 +551,121 @@ function resolveScoreSource(): { title: string; bpmBase: number; notes: NoteEven
 }
 
 /**
- * 导入外部谱面文件 —— 全部走 parseAny 统一入口：
+ * 导入外部谱面文件（支持**批量多选**）—— 全部走 parseAny 统一入口：
  * .mid / .midi → @tonejs/midi；.musicxml / .xml / .mxl / .abc → @webmusic/score；
  * .txt → 字符谱（按当前键位表映射）。解析出的 NoteEvent[] 与内置谱走完全相同的
  * Transport / 判定引擎 / 下落画布 / 谱面视图。
+ *
+ * 导入的谱面进入**常驻列表**：切歌不丢、刷新自动恢复；单个文件解析失败
+ * 不影响同批其他文件。
  */
 async function handleImportFile(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = ''; // 清空以便重复导入同一个文件
-  if (!file) return;
+  const files = Array.from(input.files ?? []);
+  input.value = ''; // 清空以便重复导入同一批文件
+  if (files.length === 0) return;
   if (playState.value !== 'idle') stopPlayback();
-  try {
-    const bytes = await file.arrayBuffer();
-    const result = await parseAny({ bytes, fileName: file.name, keyMap: baseKeyMap.value });
-    importedScore.value = {
-      title: file.name.replace(/\.[^.]+$/, ''),
-      bpm: result.bpm,
-      notes: result.notes,
-    };
-    scoreId.value = IMPORTED_SCORE_ID;
-    // 持久化原始文件（不是解析结果）：刷新 / 重开后自动恢复；
-    // 超过 localStorage 体积上限时只保留在内存（本次会话可用）
-    const stored = saveStoredImport({
-      name: file.name,
-      data: bytesToBase64(new Uint8Array(bytes)),
-      encoding: 'base64',
-    });
-    if (!stored) {
-      console.warn('[琴习·导入] 文件过大，未持久化：仅本次会话可用，切歌后需重新导入');
+
+  let ok = 0;
+  let lastId = '';
+  for (const file of files) {
+    try {
+      const bytes = await file.arrayBuffer();
+      const result = await parseAny({ bytes, fileName: file.name, keyMap: baseKeyMap.value });
+      const entry: ImportEntry = {
+        id: `i${Date.now().toString(36)}_${importSeq++}`,
+        name: file.name,
+        title: file.name.replace(/\.[^.]+$/, ''),
+        bpm: result.bpm,
+        notes: result.notes,
+        data: bytesToBase64(new Uint8Array(bytes)),
+      };
+      importEntries.value.push(entry);
+      lastId = entry.id;
+      ok += 1;
+      for (const warning of result.warnings) {
+        console.warn(`[琴习·导入] ${warning}`);
+      }
+      console.info(
+        `[琴习·导入] ${file.name}（${result.format}）：${result.notes.length} 音 · ${Math.round(result.bpm)} BPM`,
+      );
+    } catch (error) {
+      console.error('[琴习·导入] 解析失败：', file.name, error);
     }
-    for (const warning of result.warnings) {
-      console.warn(`[琴习·导入] ${warning}`);
-    }
-    importMessage.value = '';
-    console.info(
-      `[琴习·导入] ${file.name}（${result.format}）：${result.notes.length} 音 · ${Math.round(result.bpm)} BPM`,
+  }
+
+  // 持久化整份列表（原始文件 base64，恢复时重新解析）；超限时从后往前丢
+  const storedList: StoredImport[] = importEntries.value.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    data: entry.data,
+    encoding: 'base64',
+  }));
+  const persisted = saveStoredImports(storedList);
+  if (persisted < storedList.length) {
+    console.warn(
+      `[琴习·导入] 谱面总量超出 localStorage 上限：仅持久化前 ${persisted}/${storedList.length} 个，其余仅本次会话可用`,
     );
-  } catch (error) {
-    importMessage.value = `导入失败：${error instanceof Error ? error.message : String(error)}`;
-    console.error('[琴习·导入] 解析失败：', error);
+  }
+
+  if (ok > 0) {
+    importMessage.value = '';
+    scoreId.value = IMPORT_PREFIX + lastId; // 选中本批最后一个
+  } else {
+    importMessage.value = '导入失败：没有可识别的谱面文件';
   }
 }
 
-/** 移除导入谱面，回到内置曲目（持久化的一份也清掉） */
-function clearImportedScore(): void {
-  importedScore.value = null;
-  clearStoredImport();
+/** 移除当前选中的导入谱面（持久化的一份同步重写），回到内置曲目 */
+function removeSelectedImport(): void {
+  if (!scoreId.value.startsWith(IMPORT_PREFIX)) return;
+  const id = scoreId.value.slice(IMPORT_PREFIX.length);
+  importEntries.value = importEntries.value.filter((entry) => entry.id !== id);
+  saveStoredImports(
+    importEntries.value.map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      data: entry.data,
+      encoding: 'base64' as const,
+    })),
+  );
   scoreId.value = DEFAULT_SCORE_ID;
 }
 
 /**
- * 开局恢复上次导入的谱面：从 localStorage 取回原始文件重新解析
+ * 开局恢复全部导入谱面：从 localStorage 取回原始文件重新解析
  * （不是反序列化解析结果）—— 键位表变了、解析器升级了，都会按当前逻辑重算。
- * 恢复失败（文件损坏 / 格式不再支持）就清掉存档，不阻塞启动。
+ * 单条恢复失败（文件损坏 / 格式不再支持）就丢弃该条并重写存档，不阻塞启动。
  */
-async function restoreStoredImport(): Promise<void> {
-  const stored = loadStoredImport();
-  if (!stored) return;
-  try {
-    const bytes = stored.encoding === 'base64'
-      ? base64ToBytes(stored.data)
-      : new TextEncoder().encode(stored.data);
-    const result = await parseAny({ bytes, fileName: stored.name, keyMap: baseKeyMap.value });
-    importedScore.value = {
-      title: stored.name.replace(/\.[^.]+$/, ''),
-      bpm: result.bpm,
-      notes: result.notes,
-    };
-    scoreId.value = IMPORTED_SCORE_ID;
-    console.info(
-      `[琴习·导入] 已恢复上次导入的「${stored.name}」：${result.notes.length} 音 · ${Math.round(result.bpm)} BPM`,
-    );
-  } catch (error) {
-    console.warn('[琴习·导入] 上次导入的谱面恢复失败，已清除存档：', error);
-    clearStoredImport();
+async function restoreStoredImports(): Promise<void> {
+  const stored = loadStoredImports();
+  if (stored.length === 0) return;
+  const entries: ImportEntry[] = [];
+  const kept: StoredImport[] = [];
+  for (const item of stored) {
+    try {
+      const bytes = item.encoding === 'base64'
+        ? base64ToBytes(item.data)
+        : new TextEncoder().encode(item.data);
+      const result = await parseAny({ bytes, fileName: item.name, keyMap: baseKeyMap.value });
+      entries.push({
+        id: item.id,
+        name: item.name,
+        title: item.name.replace(/\.[^.]+$/, ''),
+        bpm: result.bpm,
+        notes: result.notes,
+        data: item.data,
+      });
+      kept.push(item);
+      console.info(
+        `[琴习·导入] 已恢复「${item.name}」：${result.notes.length} 音 · ${Math.round(result.bpm)} BPM`,
+      );
+    } catch (error) {
+      console.warn(`[琴习·导入] 「${item.name}」恢复失败，已从存档移除：`, error);
+    }
   }
+  importEntries.value = entries;
+  saveStoredImports(kept);
 }
 
 function startPlayback(): void {
@@ -858,14 +915,9 @@ const loopTrackStyle = computed(() => {
   return undefined;
 });
 
-// 换曲目：正在播/暂停中都先停，避免「暂停在 A 曲第 3 拍、切到 B 曲接着放」的怪状态
-watch(scoreId, (id) => {
-  // 切回内置曲目时丢掉导入谱面（导入 option 从 select 里消失，持久化的一份一并清除）
-  if (id !== IMPORTED_SCORE_ID) {
-    importedScore.value = null;
-    clearStoredImport();
-  }
-  if (playState.value !== 'idle') stopPlayback();
+// 换曲目：正在播/暂停中都先停，避免「暂停在 A 曲第 3 拍、切到 B 曲接着放」的怪状态。
+// 导入谱面是常驻列表，切歌不清除——只有点 ×（removeSelectedImport）才移除。
+watch(scoreId, () => {  if (playState.value !== 'idle') stopPlayback();
 });
 
 // 换模式：正在播就先停（三种模式的发声与推进方式完全不同，不能热切）
@@ -1191,7 +1243,7 @@ onMounted(() => {
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onBlur);
   // 上次导入的谱面恢复回来（异步：解析完自动出现在曲目下拉里）
-  void restoreStoredImport();
+  void restoreStoredImports();
 });
 
 onBeforeUnmount(() => {
@@ -1236,29 +1288,32 @@ onBeforeUnmount(() => {
         </div>
         <select v-model="scoreId" class="player__select" aria-label="选择曲谱" :disabled="playState !== 'idle'">
           <option v-for="item in BUILT_IN_SCORES" :key="item.id" :value="item.id">{{ item.title }}</option>
-          <option v-if="importedScore" :value="IMPORTED_SCORE_ID">
-            导入：{{ importedScore.title }}（{{ Math.round(importedScore.bpm) }} BPM）
-          </option>
+          <optgroup v-if="importEntries.length > 0" label="导入的谱面">
+            <option v-for="entry in importEntries" :key="entry.id" :value="IMPORT_PREFIX + entry.id">
+              {{ entry.title }}（{{ Math.round(entry.bpm) }} BPM）
+            </option>
+          </optgroup>
         </select>
         <label
           class="player__import"
-          title="导入 MIDI / MusicXML / MXL / ABC / 字符谱文件"
+          title="导入 MIDI / MusicXML / MXL / ABC / 字符谱文件（可一次选多个）"
         >
           <input
             type="file"
             accept=".mid,.midi,.musicxml,.xml,.mxl,.abc,.txt"
-            aria-label="导入谱面文件"
+            aria-label="导入谱面文件（可多选）"
+            multiple
             @change="handleImportFile"
           />
           导入
         </label>
         <button
-          v-if="importedScore"
+          v-if="scoreId.startsWith(IMPORT_PREFIX)"
           type="button"
           class="player__import-clear"
-          title="移除导入谱面，回到内置曲目"
-          aria-label="移除导入谱面"
-          @click="clearImportedScore"
+          title="移除当前选中的导入谱面"
+          aria-label="移除当前选中的导入谱面"
+          @click="removeSelectedImport"
         >×</button>
         <span v-if="importMessage" class="player__import-msg" role="status">{{ importMessage }}</span>
       </div>
