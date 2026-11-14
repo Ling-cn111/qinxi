@@ -6,6 +6,7 @@ import NoteVisualizer from '@/components/NoteVisualizer.vue';
 import ThemeMenu from '@/components/ThemeMenu.vue';
 import UiToggle from '@/components/UiToggle.vue';
 import FollowCanvas from '@/components/FollowCanvas.vue';
+import ScoreScroller from '@/components/ScoreScroller.vue';
 import CalibrationPanel from '@/components/CalibrationPanel.vue';
 import { PianoEngine, type EngineStatus } from '@/audio/PianoEngine';
 import {
@@ -34,6 +35,7 @@ import { BUILT_IN_SCORES, DEFAULT_SCORE_ID, findScore, loadScore } from '@/data/
 import { activeNotesAt, samePitchSet } from '@/transport/activeNotes';
 import { Transport, type TransportSnapshot } from '@/transport/transport';
 import { collectMissed, judgeHit, type Grade, type Judgment } from '@/game/judge';
+import { findLearnMatch, groupEndIndex, isGroupComplete, nextTargetHints } from '@/game/learn';
 import {
   CALIBRATION_TAPS_MAX,
   CALIBRATION_TAPS_REQUIRED,
@@ -225,9 +227,10 @@ const scoreId = ref<string>(DEFAULT_SCORE_ID);
 const playState = ref<'idle' | 'playing' | 'paused'>('idle');
 /**
  * 播放模式：listen = 自动播放（引擎发声，琴键自己亮）；
- * follow = 跟弹（Transport 只当节拍器，声音由用户按键发，Canvas 落音符 + 判定）。
+ * follow = 跟弹（Transport 只当节拍器，声音由用户按键发，Canvas 落音符 + 判定）；
+ * learn = 自助学弹（没有进度条与时钟推进，只显示谱面，按对当前音才往后走）。
  */
-const playMode = ref<'listen' | 'follow'>('listen');
+const playMode = ref<'listen' | 'follow' | 'learn'>('listen');
 /** 自动播放正在响的音（琴键高亮的数据源，渲染循环里更新） */
 const autoPressed = ref<ReadonlySet<number>>(new Set());
 const playProgressText = ref('');
@@ -242,6 +245,64 @@ const followBpm = ref(96);
  * 必须与 FollowCanvas 的 LEAD_SECONDS 一致（长条提前这么久入场）。
  */
 const FOLLOW_PREROLL_SECONDS = 2;
+/**
+ * 变速练习：50–100（%）。只改播放 BPM —— 判定窗口仍按「拍差 × 当前拍长」换算回
+ * 物理毫秒（见 judge.ts），所以慢速下判定不会变宽松。
+ */
+const speed = ref(100);
+
+// ---------------------------------------------------------------- A-B 循环与进度条
+/** 循环点（拍位）；A/B 都设置后才启用循环。停止后保留，换曲或装谱时清除 */
+const loopA = ref<number | null>(null);
+const loopB = ref<number | null>(null);
+/** 进度条状态：onTick 推着走，拖动时让位给 scrubBeat */
+const progressBeat = ref(0);
+const totalBeatsUi = ref(0);
+const scrubbing = ref(false);
+const scrubBeat = ref(0);
+
+/** 跟弹视图显示模式：下落画布 / 键盘谱 / 两者（持久化） */
+const SCORE_VIEW_KEY = 'qinxi:scoreview:v1';
+function loadScoreView(): 'falling' | 'sheet' | 'both' {
+  try {
+    const raw = window.localStorage.getItem(SCORE_VIEW_KEY);
+    if (raw === 'falling' || raw === 'sheet' || raw === 'both') return raw;
+  } catch { /* 隐私模式忽略 */ }
+  return 'both';
+}
+const scoreView = ref<'falling' | 'sheet' | 'both'>(loadScoreView());
+watch(scoreView, (value) => {
+  try {
+    window.localStorage.setItem(SCORE_VIEW_KEY, value);
+  } catch { /* 隐私模式忽略 */ }
+});
+
+/** 谱面字符样式：键帽字母 / 音名 —— 二选一，互斥显示（持久化） */
+const SCORE_CHAR_KEY = 'qinxi:scorechar:v1';
+function loadScoreChar(): 'char' | 'note' {
+  try {
+    const raw = window.localStorage.getItem(SCORE_CHAR_KEY);
+    if (raw === 'char' || raw === 'note') return raw;
+  } catch { /* 隐私模式忽略 */ }
+  return 'char';
+}
+const scoreChar = ref<'char' | 'note'>(loadScoreChar());
+watch(scoreChar, (value) => {
+  try {
+    window.localStorage.setItem(SCORE_CHAR_KEY, value);
+  } catch { /* 隐私模式忽略 */ }
+});
+
+/** 谱面的显示字符：键帽字母（按当前键位表反查）或音名（C4 / A#5），空置用 · 占位 */
+const scoreChars = computed(() =>
+  currentNotesRef.value.map((note) =>
+    scoreChar.value === 'note'
+      ? midiToName(note.pitch)
+      : keyMap.value.charFor(note.pitch) ?? '·',
+  ),
+);
+/** 音名（C#4 这类三字符）比键帽字母宽，字符格随之加宽 */
+const scoreCellWidth = computed(() => (scoreChar.value === 'note' ? 36 : 26));
 /** 跟弹：音符下标 → 判定等级。判定频率高，走可变对象，不走 Vue 响应式 */
 const judgedMap = new Map<number, Grade>();
 const followStats = reactive({ perfect: 0, good: 0, miss: 0 });
@@ -250,6 +311,26 @@ const lastGrade = ref<Grade | null>(null);
 const followSummary = ref('');
 /** 跟弹进行中（判定与清扫挂在这个条件下） */
 const followActive = computed(() => playMode.value === 'follow' && playState.value === 'playing');
+
+// ---------------------------------------------------------------- 自助学弹
+/** 学弹指针：下一个待弹音的下标；-1 = 未开始。没有时钟，按对当前组才推进 */
+const learnCursor = ref(-1);
+/** 已弹对的音数（judgedMap 是可变对象不进响应式，这里留个响应式镜像给界面） */
+const learnDone = ref(0);
+/** 学弹中的错音次数：错音照常发声，但不推进指针 */
+const learnWrong = ref(0);
+/** 学弹进行中 */
+const learnActive = computed(() => playMode.value === 'learn' && playState.value === 'playing');
+/** 学弹进度文案：第 x / n 音 */
+const learnProgressText = computed(() => {
+  const total = currentNotesRef.value.length;
+  if (total === 0 || learnCursor.value < 0) return '';
+  return `第 ${Math.min(learnCursor.value + 1, total)} / ${total} 音`;
+});
+
+// ---------------------------------------------------------------- 下一音琴键黄提示
+/** 「下一个要弹的音」的音高集合：跟弹 = 第一个未判定的组；学弹 = 当前待弹组 */
+const hintPitches = ref<ReadonlySet<number>>(new Set());
 
 /**
  * 判定 / 漏按清扫共用的拍位：先按输入延迟修正时刻，再换算拍位。
@@ -278,11 +359,29 @@ const transport = new Transport({
     onCancelAll: () => engine.stopAll(),
     onTick: (snapshot) => updateProgress(snapshot),
     onEnd: () => onPlaybackEnd(),
+    onLoopJump: (aBeat) => onLoopJumped(aBeat),
   },
 });
 
+/**
+ * A-B 循环跳回 A 点：把 [A, B) 段的判定清掉、统计回退 —— 这段可以重新死磕，
+ * 重弹的音重新判定，不会因为「已经判过」而全被跳过。
+ */
+function onLoopJumped(aBeat: number): void {
+  for (let index = 0; index < currentNotesRef.value.length; index += 1) {
+    const note = currentNotesRef.value[index];
+    if (note.startBeat < aBeat - 1e-6) continue;
+    const grade = judgedMap.get(index);
+    if (!grade) continue;
+    judgedMap.delete(index);
+    followStats[grade] -= 1;
+  }
+}
+
 function updateProgress(snapshot: TransportSnapshot): void {
   playProgressText.value = `${snapshot.beat.toFixed(1)} / ${snapshot.totalBeats.toFixed(1)} 拍`;
+  totalBeatsUi.value = snapshot.totalBeats;
+  if (!scrubbing.value) progressBeat.value = snapshot.beat;
 }
 
 /** 渲染循环：每帧从拍位推出「此刻该亮的键」，集合没变就不动 DOM（CSS 类切换交给 PianoKeyboard） */
@@ -375,12 +474,22 @@ function recordMissed(index: number): void {
   console.info(`[琴习·判定] MISS（漏按）${midiToName(item.pitch)} @${item.startBeat}拍`);
 }
 
-/** 跟弹渲染循环：每帧清扫一次漏按（判定本身在按键事件里做，这里只兜底） */
+/** 跟弹渲染循环：每帧清扫一次漏按 + 刷新「下一音」琴键黄提示（判定本身在按键事件里做） */
 function renderFollowLoop(): void {
   for (const index of collectMissed(currentNotesRef.value, judgedMap, correctedBeat(), transport.secondsPerBeat)) {
     recordMissed(index);
   }
+  updateFollowHint();
   renderRafId = followActive.value ? requestAnimationFrame(renderFollowLoop) : 0;
+}
+
+/** 跟弹的下一音提示：从谱面头找第一个未判定的音，它所在组的全部未判成员一起亮 */
+function updateFollowHint(): void {
+  const next = nextTargetHints(currentNotesRef.value, judgedMap);
+  const previous = hintPitches.value;
+  // 集合没变就不换实例，避免每帧都触发 PianoKeyboard 的 props 比较
+  if (next.size === previous.size && [...next].every((pitch) => previous.has(pitch))) return;
+  hintPitches.value = next;
 }
 
 function startRenderLoop(): void {
@@ -389,6 +498,10 @@ function startRenderLoop(): void {
 }
 
 function startPlayback(): void {
+  if (playMode.value === 'learn') {
+    startLearn();
+    return;
+  }
   const score = findScore(scoreId.value);
   if (!score) return;
   if (editMode.value) exitEdit();
@@ -400,15 +513,106 @@ function startPlayback(): void {
   }
   currentNotes = parsed.notes;
   currentNotesRef.value = parsed.notes;
-  followBpm.value = score.bpm;
+  followBpm.value = (score.bpm * speed.value) / 100;
   resetFollowProgress();
-  transport.load(parsed.notes, { bpm: score.bpm });
+  // 空闲时用户可能拖过进度条：记住落点，装谱后回到那里（「拖到哪就从哪播」）
+  // （beat getter 在非播放态返回暂停停留点；播放中不会走进 startPlayback）
+  const resumeBeat = transport.beat;
+  transport.load(parsed.notes, { bpm: followBpm.value });
+  // 死磕场景：停止 / 换播放后再播，循环点仍然保留（load 会清 transport 侧，这里重挂）
+  if (loopA.value !== null && loopB.value !== null) {
+    try {
+      transport.setLoop(loopA.value, loopB.value);
+    } catch {
+      loopA.value = null;
+      loopB.value = null;
+    }
+  }
+  if (resumeBeat > 0) transport.seek(resumeBeat);
   transport.play(playMode.value === 'follow' ? FOLLOW_PREROLL_SECONDS : undefined);
   playState.value = 'playing';
   startRenderLoop();
 }
 
+/**
+ * 自助学弹：不用 Transport 推进（不 play，没有任何时钟在走）。
+ * 谱面装好后指针停在第一个音，「下一个要弹的音」在琴上亮黄，
+ * 按对当前组（和弦要弹满）指针才推到下一组 —— 快慢完全由学习者掌握。
+ */
+function startLearn(): void {
+  const score = findScore(scoreId.value);
+  if (!score) return;
+  if (editMode.value) exitEdit();
+  void engine.start();
+  const parsed = loadScore(score, baseKeyMap.value);
+  if (parsed.warnings.length > 0) {
+    console.warn('[琴习] 谱面解析有警告：', parsed.warnings);
+  }
+  currentNotes = parsed.notes;
+  currentNotesRef.value = parsed.notes;
+  followBpm.value = (score.bpm * speed.value) / 100;
+  resetFollowProgress();
+  learnWrong.value = 0;
+  learnDone.value = 0;
+  // 只装谱统一状态（清循环 / 归零），学弹全程不 play
+  transport.load(parsed.notes, { bpm: followBpm.value });
+  learnCursor.value = 0;
+  updateLearnHints();
+  followSummary.value = '';
+  playState.value = 'playing';
+  console.info(`[琴习·学弹] 开始「${score.title}」：共 ${parsed.notes.length} 音，按对当前音才往后走`);
+}
+
+/** 学弹的下一音提示：当前组里还没弹的音一起亮 */
+function updateLearnHints(): void {
+  const notes = currentNotesRef.value;
+  const cursor = learnCursor.value;
+  const set = new Set<number>();
+  if (cursor >= 0 && cursor < notes.length) {
+    const end = groupEndIndex(notes, cursor);
+    for (let index = cursor; index < end; index += 1) {
+      if (!judgedMap.has(index)) set.add(notes[index].pitch);
+    }
+  }
+  hintPitches.value = set;
+}
+
+/** 学弹按键：命中当前组 → 标记并（弹满时）推进；错音只计数，指针不动 */
+function handleLearnPress(pitch: number): void {
+  const notes = currentNotesRef.value;
+  const cursor = learnCursor.value;
+  const matched = findLearnMatch(notes, cursor, judgedMap, pitch);
+  if (matched.length === 0) {
+    learnWrong.value += 1;
+    lastGrade.value = 'miss';
+    return;
+  }
+  for (const index of matched) {
+    judgedMap.set(index, 'perfect');
+    console.info(`[琴习·学弹] ✓ ${midiToName(notes[index].pitch)}（${learnDone.value + 1}/${notes.length}）`);
+  }
+  learnDone.value += matched.length;
+  lastGrade.value = 'perfect';
+  if (isGroupComplete(notes, cursor, judgedMap)) {
+    learnCursor.value = groupEndIndex(notes, cursor);
+    if (learnCursor.value >= notes.length) {
+      // 全谱弹完：收摊，结算行交给 followSummary
+      playState.value = 'idle';
+      hintPitches.value = new Set();
+      followSummary.value = `学弹完成：共 ${notes.length} 音 · 错音 ${learnWrong.value} 次`;
+      console.info(`[琴习·学弹] 完成「${scoreId.value}」：错音 ${learnWrong.value} 次`);
+      return;
+    }
+  }
+  updateLearnHints();
+}
+
 function togglePlay(): void {
+  // 学弹没有「暂停」语义：播放键 = 开始 / 重新开始
+  if (playMode.value === 'learn') {
+    startLearn();
+    return;
+  }
   if (playState.value === 'playing') {
     transport.pause();
     playState.value = 'paused';
@@ -437,8 +641,12 @@ function stopPlayback(): void {
   playState.value = 'idle';
   stopRenderLoop();
   autoPressed.value = new Set();
+  hintPitches.value = new Set();
   if (playMode.value === 'follow') {
     followSummary.value = buildFollowSummary(currentNotesRef.value.length);
+  } else if (playMode.value === 'learn') {
+    learnCursor.value = -1;
+    followSummary.value = '';
   }
   updateProgress(transport.snapshot);
 }
@@ -454,16 +662,98 @@ function onPlaybackEnd(): void {
   playState.value = 'idle';
   stopRenderLoop();
   autoPressed.value = new Set();
+  hintPitches.value = new Set();
   updateProgress({ ...transport.snapshot, beat: 0 });
 }
+
+/**
+ * 松手应用变速：播放中 Transport 重锚续播（拍位连续），空闲 / 暂停只改拍长。
+ * 下落画布的 pxPerBeat 跟随 followBpm，变速后下落速度同步变慢。
+ */
+function applySpeed(): void {
+  const score = findScore(scoreId.value);
+  if (!score) return;
+  followBpm.value = (score.bpm * speed.value) / 100;
+  transport.setTempo(followBpm.value);
+}
+
+/** 设 A / 设 B：取当前拍位（播放 / 暂停都取停留点） */
+function setLoopPoint(which: 'a' | 'b'): void {
+  const beat = Math.round(transport.beat * 100) / 100;
+  if (which === 'a') {
+    if (loopB.value !== null && beat >= loopB.value) {
+      flash('A 点必须设在 B 点之前');
+      return;
+    }
+    loopA.value = beat;
+  } else {
+    if (loopA.value === null) {
+      flash('先设 A 点，再设 B 点');
+      return;
+    }
+    if (beat <= loopA.value) {
+      flash('B 点必须设在 A 点之后');
+      return;
+    }
+    loopB.value = beat;
+  }
+  if (loopA.value !== null && loopB.value !== null) {
+    transport.setLoop(loopA.value, loopB.value);
+  }
+}
+
+function clearLoopRange(): void {
+  loopA.value = null;
+  loopB.value = null;
+  transport.clearLoop();
+}
+
+function onScrubInput(event: Event): void {
+  scrubbing.value = true;
+  scrubBeat.value = Number((event.target as HTMLInputElement).value);
+}
+
+function onScrubEnd(): void {
+  if (scrubbing.value) seekTo(scrubBeat.value);
+  scrubbing.value = false;
+}
+
+/** 拖进度条跳转：空闲时落到该拍（下次播放从这开始），播放 / 暂停中即时 seek */
+function seekTo(beat: number): void {
+  const total = transport.snapshot.totalBeats || totalBeatsUi.value || 0;
+  const target = Math.max(0, Math.min(beat, total));
+  transport.seek(target);
+  progressBeat.value = target;
+}
+
+/** 进度条上的 A-B 区段底色 */
+const loopTrackStyle = computed(() => {
+  const total = totalBeatsUi.value || 1;
+  const pct = (value: number) => `${((value / total) * 100).toFixed(2)}%`;
+  const a = loopA.value;
+  const b = loopB.value;
+  const dim = 'rgba(var(--qin-accent-rgb), 0.07)';
+  const lit = 'rgba(var(--qin-accent-rgb), 0.4)';
+  if (a !== null && b !== null) {
+    return { background: `linear-gradient(90deg, ${dim} 0%, ${dim} ${pct(a)}, ${lit} ${pct(a)}, ${lit} ${pct(b)}, ${dim} ${pct(b)}, ${dim} 100%)` };
+  }
+  if (a !== null) {
+    return { background: `linear-gradient(90deg, ${dim} 0%, ${dim} ${pct(a)}, ${lit} ${pct(a)}, ${lit} 100%)` };
+  }
+  if (b !== null) {
+    return { background: `linear-gradient(90deg, ${lit} 0%, ${lit} ${pct(b)}, ${dim} ${pct(b)}, ${dim} 100%)` };
+  }
+  return undefined;
+});
 
 // 换曲目：正在播/暂停中都先停，避免「暂停在 A 曲第 3 拍、切到 B 曲接着放」的怪状态
 watch(scoreId, () => {
   if (playState.value !== 'idle') stopPlayback();
 });
 
-// 换模式：正在播就先停（自动播放的发声方式和跟弹完全不同，不能热切）
+// 换模式：正在播就先停（三种模式的发声与推进方式完全不同，不能热切）
 watch(playMode, () => {
+  hintPitches.value = new Set();
   if (playState.value !== 'idle') stopPlayback();
 });
 
@@ -672,6 +962,9 @@ function pressPitch(pitch: number, velocity = 100): void {
   } else if (followActive.value) {
     // 跟弹中：这次按键先送判定（键盘与点琴键共用此路径）
     judgeFollowPress(pitch);
+  } else if (learnActive.value) {
+    // 学弹中：按对推进 / 错音计数（声音照常发，学习者听得到自己按了什么）
+    handleLearnPress(pitch);
   }
   if (pressed.has(pitch)) return;
   pressed.add(pitch);
@@ -868,13 +1161,30 @@ onBeforeUnmount(() => {
                 :class="{ 'is-active': playMode === 'follow' }"
                 @click="playMode = 'follow'"
               >跟弹</button>
+              <button
+                type="button"
+                :class="{ 'is-active': playMode === 'learn' }"
+                @click="playMode = 'learn'"
+              >学弹</button>
             </div>
             <select v-model="scoreId" class="player__select" aria-label="选择曲谱" :disabled="playState !== 'idle'">
               <option v-for="item in BUILT_IN_SCORES" :key="item.id" :value="item.id">{{ item.title }}</option>
             </select>
+            <label v-if="playMode !== 'learn'" class="player__speed" title="练习速度（判定窗口不随速度变化）">
+              <input
+                v-model.number="speed"
+                type="range"
+                min="50"
+                max="100"
+                step="5"
+                aria-label="练习速度"
+                @change="applySpeed"
+              />
+              <span>{{ speed }}%</span>
+            </label>
             <button type="button" class="text-btn player__play" @click="togglePlay">
               <svg class="player__icon" viewBox="0 0 10 10" aria-hidden="true">
-                <template v-if="playState === 'playing'">
+                <template v-if="playState === 'playing' && playMode !== 'learn'">
                   <rect x="1.6" y="1.6" width="2.4" height="6.8" fill="currentColor" />
                   <rect x="6" y="1.6" width="2.4" height="6.8" fill="currentColor" />
                 </template>
@@ -882,13 +1192,57 @@ onBeforeUnmount(() => {
                   <path d="M2.4 1.3 8.4 5 2.4 8.7z" fill="currentColor" />
                 </template>
               </svg>
-              {{ playState === 'playing' ? '暂停' : playState === 'paused' ? '继续' : '播放' }}
+              {{
+                playMode === 'learn'
+                  ? playState === 'playing' ? '重新开始' : '开始学弹'
+                  : playState === 'playing' ? '暂停' : playState === 'paused' ? '继续' : '播放'
+              }}
             </button>
             <button type="button" class="text-btn" :disabled="playState === 'idle'" @click="stopPlayback">停止</button>
-            <span class="player__beat">{{ playProgressText }}</span>
+            <span class="player__beat">{{ playMode === 'learn' ? learnProgressText : playProgressText }}</span>
+            <div v-if="playMode !== 'learn'" class="player__bar" role="group" aria-label="进度与 A-B 循环">
+              <input
+                class="player__progress"
+                type="range"
+                min="0"
+                :max="totalBeatsUi || 1"
+                step="0.05"
+                :value="scrubbing ? scrubBeat : progressBeat"
+                :style="loopTrackStyle"
+                aria-label="播放进度（拖动跳转）"
+                @input="onScrubInput"
+                @change="onScrubEnd"
+              />
+              <div class="player__loopbtns">
+                <button
+                  type="button"
+                  class="text-btn player__loopbtn"
+                  :class="{ 'is-marked': loopA !== null }"
+                  title="把当前位置设为循环起点"
+                  @click="setLoopPoint('a')"
+                >设 A</button>
+                <button
+                  type="button"
+                  class="text-btn player__loopbtn"
+                  :class="{ 'is-marked': loopB !== null }"
+                  title="把当前位置设为循环终点"
+                  @click="setLoopPoint('b')"
+                >设 B</button>
+                <button
+                  v-if="loopA !== null || loopB !== null"
+                  type="button"
+                  class="text-btn player__loopbtn"
+                  @click="clearLoopRange"
+                >清除循环</button>
+              </div>
+            </div>
             <span v-if="playMode === 'follow' && playState !== 'idle'" class="player__judge">
               <b :class="`grade-${lastGrade ?? 'none'}`">{{ lastGrade ? GRADE_LABEL[lastGrade] : '—' }}</b>
               <span>Perfect {{ followStats.perfect }} · Good {{ followStats.good }} · Miss {{ followStats.miss }}</span>
+            </span>
+            <span v-else-if="playMode === 'learn' && playState !== 'idle'" class="player__judge">
+              <b>学弹</b>
+              <span>已弹 {{ learnDone }} / {{ currentNotesRef.length }} · 错音 {{ learnWrong }} · 按对当前音才往后走</span>
             </span>
             <span v-else-if="followSummary" class="player__judge player__judge--summary" role="status">{{ followSummary }}</span>
           </div>
@@ -897,19 +1251,19 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- 跟弹播放时：下落音符画布替换音符频谱（弹奏反馈）；校准时显示校准节拍；其余情况显示频谱 -->
-      <div v-if="calibrationOpen || (playMode === 'follow' && playState !== 'idle')" class="viz-slot">
+      <!-- 视图区：校准节拍优先；跟弹播放按显示模式组合下落画布与谱面；
+           学弹只显示谱面（无进度条、无下落）；自动播放 = 频谱 + 谱面（若开启）；空闲 = 频谱 -->
+      <div v-if="calibrationOpen" class="viz-slot">
         <FollowCanvas
           ref="followCanvas"
           class="viz-slot__canvas"
-          :notes="calibrationOpen ? calibNotes : currentNotesRef"
-          :judged="calibrationOpen ? emptyJudged : judgedMap"
-          :get-beat="calibrationOpen ? () => calibrationTransport.rawBeat : () => transport.rawBeat"
-          :playing="calibrationOpen ? calibrationTransport.playing : playState === 'playing'"
-          :bpm="calibrationOpen ? 120 : followBpm"
+          :notes="calibNotes"
+          :judged="emptyJudged"
+          :get-beat="() => calibrationTransport.rawBeat"
+          :playing="calibrationTransport.playing"
+          :bpm="120"
         />
         <CalibrationPanel
-          v-if="calibrationOpen"
           class="viz-slot__panel"
           :phase="calibrationPhase"
           :taps="calibrationTaps"
@@ -923,6 +1277,52 @@ onBeforeUnmount(() => {
           @tap="recordCalibrationTap"
         />
       </div>
+      <div
+        v-else-if="playMode === 'follow' && playState !== 'idle'"
+        class="viz-stack"
+        :class="`viz-stack--${scoreView}`"
+      >
+        <FollowCanvas
+          v-if="scoreView !== 'sheet'"
+          ref="followCanvas"
+          :notes="currentNotesRef"
+          :judged="judgedMap"
+          :get-beat="() => transport.rawBeat"
+          :playing="playState === 'playing'"
+          :bpm="followBpm"
+        />
+        <ScoreScroller
+          v-if="scoreView !== 'falling'"
+          :notes="currentNotesRef"
+          :chars="scoreChars"
+          :judged="judgedMap"
+          :get-beat="() => transport.rawBeat"
+          :playing="playState === 'playing'"
+          :cell-width="scoreCellWidth"
+        />
+      </div>
+      <div v-else-if="playMode === 'learn' && playState !== 'idle'" class="viz-stack viz-stack--sheet">
+        <ScoreScroller
+          :notes="currentNotesRef"
+          :chars="scoreChars"
+          :judged="judgedMap"
+          :get-beat="() => transport.rawBeat"
+          :playing="true"
+          :learn-cursor="learnCursor"
+          :cell-width="scoreCellWidth"
+        />
+      </div>
+      <div v-else-if="playState !== 'idle' && scoreView !== 'falling'" class="viz-stack">
+        <NoteVisualizer ref="visualizer" />
+        <ScoreScroller
+          :notes="currentNotesRef"
+          :chars="scoreChars"
+          :judged="null"
+          :get-beat="() => transport.rawBeat"
+          :playing="playState === 'playing'"
+          :cell-width="scoreCellWidth"
+        />
+      </div>
       <NoteVisualizer v-else ref="visualizer" />
 
       <PianoKeyboard
@@ -933,6 +1333,7 @@ onBeforeUnmount(() => {
         :viewport="viewportId"
         :edit-mode="editMode"
         :edit-pitch="editPitch"
+        :hint-pitches="hintPitches"
         @press="pressPitch"
         @release="releasePitch"
       />
@@ -942,6 +1343,8 @@ onBeforeUnmount(() => {
         v-model:show-hints="showHints"
         v-model:note-names="showNoteNames"
         v-model:solfege="showSolfege"
+        v-model:score-view="scoreView"
+        v-model:score-char="scoreChar"
         v-model:volume="volume"
         v-model:diagram-mode="diagramMode"
         v-model:edit-mode="editMode"
@@ -1323,6 +1726,118 @@ onBeforeUnmount(() => {
   display: block;
 }
 
+/* 变速滑块 */
+.player__speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.player__speed input {
+  appearance: none;
+  width: 86px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(var(--qin-w-rgb), 0.16);
+  outline: none;
+  cursor: pointer;
+}
+
+.player__speed input::-webkit-slider-thumb {
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(var(--qin-ink-rgb), 0.75);
+  border: none;
+}
+
+.player__speed input::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(var(--qin-ink-rgb), 0.75);
+  border: none;
+}
+
+.player__speed span {
+  min-width: 34px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  color: rgba(var(--qin-accent-strong), 0.9);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 进度条 + A/B 循环 */
+.player__bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 180px;
+}
+
+.player__progress {
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background-color: rgba(var(--qin-w-rgb), 0.1);
+  background-clip: content-box;
+  outline: none;
+  cursor: pointer;
+}
+
+.player__progress::-webkit-slider-thumb {
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgb(var(--qin-ink-rgb));
+  border: none;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+}
+
+.player__progress::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgb(var(--qin-ink-rgb));
+  border: none;
+}
+
+.player__loopbtns {
+  display: flex;
+  gap: 10px;
+}
+
+.player__loopbtn.is-marked {
+  color: var(--qin-accent-strong);
+}
+
+/* 视图堆叠：下落画布 + 键盘谱 */
+.viz-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.viz-stack--sheet .score-scroller,
+.viz-stack--falling .follow-viz {
+  height: 96px;
+}
+
+.viz-stack--sheet .score-scroller {
+  width: 90%;
+  margin: 12px auto -12px;
+}
+
+.viz-stack .score-scroller {
+  width: 90%;
+  margin: 0 auto -12px;
+  border-top: none;
+  border-bottom: 1px solid rgba(var(--qin-w-rgb), 0.06);
+}
+
 .player__beat {
   min-width: 92px;
   text-align: right;
@@ -1366,6 +1881,7 @@ onBeforeUnmount(() => {
   .range span,
   .foot__item:nth-child(2),
   .player__beat,
+  .player__speed,
   .follow :deep(.switch__label) {
     display: none;
   }

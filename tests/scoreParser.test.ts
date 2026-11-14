@@ -263,10 +263,26 @@ describe('内置谱面', () => {
     expect(new Set(tail.map((note) => note.startBeat)).size).toBe(1);
   });
 
-  it('欢乐颂：首句是 E E F G G F E D', () => {
+  it('欢乐颂：首句 E E F G G F E D，四句 62 音，第二句收在 2 1 1', () => {
     const result = loadScore(findScore('ode-to-joy')!, keyMap);
     expect(result.notes.slice(0, 8).map((note) => note.pitch)).toEqual([64, 64, 65, 67, 67, 65, 64, 62]);
-    expect(result.notes).toHaveLength(30);
+    // 15 + 15 + 17 + 15（四句，末句同第二句）
+    expect(result.notes).toHaveLength(62);
+    // 第二句（此前误记作 2 2 3 4 3 2 2）：… 1 1 2 3 | 2 1 1 –
+    expect(result.notes.slice(15).map((note) => note.pitch)).toEqual([
+      64, 64, 65, 67, 67, 65, 64, 62, 60, 60, 62, 64, 62, 60, 60, // 第二句
+      62, 62, 64, 60, 62, 64, 65, 64, 60, 62, 64, 65, 64, 62, 60, 62, 67, // 第三句（中段）
+      64, 64, 65, 67, 67, 65, 64, 62, 60, 60, 62, 64, 62, 60, 60, // 第四句
+    ]);
+    // 末音 1（C4，末句收在 2 1 1 –）是二分音符：1 step + 3 个 ~ = 2 拍
+    const last = result.notes[result.notes.length - 1];
+    expect(last.pitch).toBe(60);
+    expect(last.durationBeats).toBe(2);
+    // 第三句收在 5（G4）也是二分音符（第三句从下标 30 起，17 个音）
+    expect(result.notes[46].pitch).toBe(67);
+    expect(result.notes[46].durationBeats).toBe(2);
+    // 四分音符 = 字符 + 一个 ~ = 1 拍（首句的 E）
+    expect(result.notes[0].durationBeats).toBe(1);
   });
 
   it('谱面总时长与 BPM / stepBeats 一致（小星星 ≈ 27.5 拍）', () => {
