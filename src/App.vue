@@ -33,6 +33,13 @@ import {
 import { midiToName } from '@/audio/note';
 import { BUILT_IN_SCORES, DEFAULT_SCORE_ID, findScore, loadScore } from '@/data/scores';
 import { parseAny } from '@/parser/parseAny';
+import {
+  base64ToBytes,
+  bytesToBase64,
+  clearStoredImport,
+  loadStoredImport,
+  saveStoredImport,
+} from '@/parser/importStore';
 import { activeNotesAt, samePitchSet } from '@/transport/activeNotes';
 import { Transport, type TransportSnapshot } from '@/transport/transport';
 import { collectMissed, judgeHit, type Grade, type Judgment } from '@/game/judge';
@@ -546,6 +553,16 @@ async function handleImportFile(event: Event): Promise<void> {
       notes: result.notes,
     };
     scoreId.value = IMPORTED_SCORE_ID;
+    // 持久化原始文件（不是解析结果）：刷新 / 重开后自动恢复；
+    // 超过 localStorage 体积上限时只保留在内存（本次会话可用）
+    const stored = saveStoredImport({
+      name: file.name,
+      data: bytesToBase64(new Uint8Array(bytes)),
+      encoding: 'base64',
+    });
+    if (!stored) {
+      console.warn('[琴习·导入] 文件过大，未持久化：仅本次会话可用，切歌后需重新导入');
+    }
     for (const warning of result.warnings) {
       console.warn(`[琴习·导入] ${warning}`);
     }
@@ -559,10 +576,39 @@ async function handleImportFile(event: Event): Promise<void> {
   }
 }
 
-/** 移除导入谱面，回到内置曲目 */
+/** 移除导入谱面，回到内置曲目（持久化的一份也清掉） */
 function clearImportedScore(): void {
   importedScore.value = null;
+  clearStoredImport();
   scoreId.value = DEFAULT_SCORE_ID;
+}
+
+/**
+ * 开局恢复上次导入的谱面：从 localStorage 取回原始文件重新解析
+ * （不是反序列化解析结果）—— 键位表变了、解析器升级了，都会按当前逻辑重算。
+ * 恢复失败（文件损坏 / 格式不再支持）就清掉存档，不阻塞启动。
+ */
+async function restoreStoredImport(): Promise<void> {
+  const stored = loadStoredImport();
+  if (!stored) return;
+  try {
+    const bytes = stored.encoding === 'base64'
+      ? base64ToBytes(stored.data)
+      : new TextEncoder().encode(stored.data);
+    const result = await parseAny({ bytes, fileName: stored.name, keyMap: baseKeyMap.value });
+    importedScore.value = {
+      title: stored.name.replace(/\.[^.]+$/, ''),
+      bpm: result.bpm,
+      notes: result.notes,
+    };
+    scoreId.value = IMPORTED_SCORE_ID;
+    console.info(
+      `[琴习·导入] 已恢复上次导入的「${stored.name}」：${result.notes.length} 音 · ${Math.round(result.bpm)} BPM`,
+    );
+  } catch (error) {
+    console.warn('[琴习·导入] 上次导入的谱面恢复失败，已清除存档：', error);
+    clearStoredImport();
+  }
 }
 
 function startPlayback(): void {
@@ -814,8 +860,11 @@ const loopTrackStyle = computed(() => {
 
 // 换曲目：正在播/暂停中都先停，避免「暂停在 A 曲第 3 拍、切到 B 曲接着放」的怪状态
 watch(scoreId, (id) => {
-  // 切回内置曲目时丢掉导入谱面（导入 option 从 select 里消失）
-  if (id !== IMPORTED_SCORE_ID) importedScore.value = null;
+  // 切回内置曲目时丢掉导入谱面（导入 option 从 select 里消失，持久化的一份一并清除）
+  if (id !== IMPORTED_SCORE_ID) {
+    importedScore.value = null;
+    clearStoredImport();
+  }
   if (playState.value !== 'idle') stopPlayback();
 });
 
@@ -1141,6 +1190,8 @@ onMounted(() => {
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', onBlur);
+  // 上次导入的谱面恢复回来（异步：解析完自动出现在曲目下拉里）
+  void restoreStoredImport();
 });
 
 onBeforeUnmount(() => {
