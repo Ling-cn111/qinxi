@@ -567,10 +567,19 @@ async function handleImportFile(event: Event): Promise<void> {
   if (playState.value !== 'idle') stopPlayback();
 
   let ok = 0;
+  let skippedDupes = 0;
   let lastId = '';
   for (const file of files) {
     try {
       const bytes = await file.arrayBuffer();
+      const data = bytesToBase64(new Uint8Array(bytes));
+      // 按内容判重：同一份文件（哪怕改了文件名）只保留一条
+      const dupe = importEntries.value.find((entry) => entry.data === data);
+      if (dupe) {
+        skippedDupes += 1;
+        console.info(`[琴习·导入] ${file.name} 与「${dupe.title}」内容相同，跳过`);
+        continue;
+      }
       const result = await parseAny({ bytes, fileName: file.name, keyMap: baseKeyMap.value });
       const entry: ImportEntry = {
         id: `i${Date.now().toString(36)}_${importSeq++}`,
@@ -578,7 +587,7 @@ async function handleImportFile(event: Event): Promise<void> {
         title: file.name.replace(/\.[^.]+$/, ''),
         bpm: result.bpm,
         notes: result.notes,
-        data: bytesToBase64(new Uint8Array(bytes)),
+        data,
       };
       importEntries.value.push(entry);
       lastId = entry.id;
@@ -609,8 +618,11 @@ async function handleImportFile(event: Event): Promise<void> {
   }
 
   if (ok > 0) {
-    importMessage.value = '';
+    importMessage.value =
+      skippedDupes > 0 ? `已导入 ${ok} 个，跳过 ${skippedDupes} 个重复文件` : '';
     scoreId.value = IMPORT_PREFIX + lastId; // 选中本批最后一个
+  } else if (skippedDupes > 0) {
+    importMessage.value = `跳过 ${skippedDupes} 个重复文件（内容已存在）`;
   } else {
     importMessage.value = '导入失败：没有可识别的谱面文件';
   }
