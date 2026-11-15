@@ -8,6 +8,7 @@ import UiToggle from '@/components/UiToggle.vue';
 import FollowCanvas from '@/components/FollowCanvas.vue';
 import ScoreScroller from '@/components/ScoreScroller.vue';
 import CalibrationPanel from '@/components/CalibrationPanel.vue';
+import ResultPanel from '@/components/ResultPanel.vue';
 import { PianoEngine, type EngineStatus } from '@/audio/PianoEngine';
 import {
   BASE_START_MIDI,
@@ -43,6 +44,7 @@ import {
 import { activeNotesAt, samePitchSet } from '@/transport/activeNotes';
 import { Transport, type TransportSnapshot } from '@/transport/transport';
 import { collectMissed, judgeHit, type Grade, type Judgment } from '@/game/judge';
+import { applyGradeToCombo } from '@/game/combo';
 import { findLearnMatch, groupEndIndex, isGroupComplete, nextTargetHints } from '@/game/learn';
 import {
   CALIBRATION_TAPS_MAX,
@@ -340,6 +342,11 @@ const followStats = reactive({ perfect: 0, good: 0, miss: 0 });
 const lastGrade = ref<Grade | null>(null);
 /** 弹完（或停止）后的结算：各档数量 + 占谱面总音符数的比例 */
 const followSummary = ref('');
+/** 连击状态机（逻辑在 src/game/combo.ts 纯函数里，这里持有状态） */
+const comboCount = ref(0);
+const maxCombo = ref(0);
+/** 结算面板：跟弹播完（或手动停止）后弹出 */
+const resultsOpen = ref(false);
 /** 跟弹进行中（判定与清扫挂在这个条件下） */
 const followActive = computed(() => playMode.value === 'follow' && playState.value === 'playing');
 
@@ -407,6 +414,8 @@ function onLoopJumped(aBeat: number): void {
     judgedMap.delete(index);
     followStats[grade] -= 1;
   }
+  // 循环段判定清空 = 这一段重新开始连，当前连击归零（maxCombo 保留全程记录）
+  comboCount.value = 0;
 }
 
 function updateProgress(snapshot: TransportSnapshot): void {
@@ -458,6 +467,9 @@ function resetFollowProgress(): void {
   followStats.miss = 0;
   lastGrade.value = null;
   followSummary.value = '';
+  comboCount.value = 0;
+  maxCombo.value = 0;
+  resultsOpen.value = false;
 }
 
 const GRADE_LABEL: Record<Grade, string> = { perfect: 'Perfect', good: 'Good', miss: 'Miss' };
@@ -467,16 +479,20 @@ function fmtDelta(deltaMs: number): string {
   return rounded > 0 ? `+${rounded}` : `${rounded}`;
 }
 
-/** 记一条判定：统计 + 控制台日志（验收看这里） */
+/** 记一条判定：统计 + 连击 + 控制台日志（验收看这里） */
 function recordJudgment(hit: Judgment): void {
   followStats[hit.grade] += 1;
   lastGrade.value = hit.grade;
+  // 连击：Perfect / Good 累加，Miss 归零（maxCombo 由状态机推高）
+  const next = applyGradeToCombo({ combo: comboCount.value, maxCombo: maxCombo.value }, hit.grade);
+  comboCount.value = next.combo;
+  maxCombo.value = next.maxCombo;
   if (hit.note) {
     console.info(
-      `[琴习·判定] ${GRADE_LABEL[hit.grade]} ${midiToName(hit.note.pitch)} Δ${fmtDelta(hit.deltaMs)}ms`,
+      `[琴习·判定] ${GRADE_LABEL[hit.grade]} ${midiToName(hit.note.pitch)} Δ${fmtDelta(hit.deltaMs)}ms${next.combo > 0 ? ` · ${next.combo} COMBO` : ''}`,
     );
   } else {
-    console.info(`[琴习·判定] MISS（错音）${midiToName(hit.pitch)}`);
+    console.info(`[琴习·判定] MISS（错音）${midiToName(hit.pitch)} · 连击断`);
   }
 }
 
@@ -496,13 +512,17 @@ function judgeFollowPress(pitch: number): void {
   recordJudgment(hit);
 }
 
-/** 漏按清扫：把窗口已过、还没判的音记成 Miss */
-function recordMissed(index: number): void {
+/** 漏按清扫：把窗口已过、还没判的音记成 Miss（final=收摊清扫，不闪判定线） */
+function recordMissed(index: number, final = false): void {
   const item = currentNotesRef.value[index];
   judgedMap.set(index, 'miss');
   followStats.miss += 1;
   lastGrade.value = 'miss';
-  console.info(`[琴习·判定] MISS（漏按）${midiToName(item.pitch)} @${item.startBeat}拍`);
+  comboCount.value = 0; // Miss 连击归零（maxCombo 不动）
+  if (!final) {
+    followCanvas.value?.flash(item.pitch, 'miss');
+    console.info(`[琴习·判定] MISS（漏按）${midiToName(item.pitch)} @${item.startBeat}拍`);
+  }
 }
 
 /** 跟弹渲染循环：每帧清扫一次漏按 + 刷新「下一音」琴键黄提示（判定本身在按键事件里做） */
@@ -815,7 +835,7 @@ function stopPlayback(): void {
   if (followActive.value) {
     const beat = transport.rawBeat;
     for (let index = 0; index < currentNotesRef.value.length; index += 1) {
-      if (!judgedMap.has(index) && currentNotesRef.value[index].startBeat < beat) recordMissed(index);
+      if (!judgedMap.has(index) && currentNotesRef.value[index].startBeat < beat) recordMissed(index, true);
     }
   }
   transport.stop();
@@ -825,6 +845,8 @@ function stopPlayback(): void {
   hintPitches.value = new Set();
   if (playMode.value === 'follow') {
     followSummary.value = buildFollowSummary(currentNotesRef.value.length);
+    // 手动停止也算一局结束：弹结算面板（中途停，未弹到的音记 Miss）
+    resultsOpen.value = true;
   } else if (playMode.value === 'learn') {
     learnCursor.value = -1;
     followSummary.value = '';
@@ -836,15 +858,27 @@ function onPlaybackEnd(): void {
   // 播完：剩下没弹的音全部记 Miss（漏按）
   if (playMode.value === 'follow') {
     for (let index = 0; index < currentNotesRef.value.length; index += 1) {
-      if (!judgedMap.has(index)) recordMissed(index);
+      if (!judgedMap.has(index)) recordMissed(index, true);
     }
     followSummary.value = buildFollowSummary(currentNotesRef.value.length);
+    resultsOpen.value = true;
   }
   playState.value = 'idle';
   stopRenderLoop();
   autoPressed.value = new Set();
   hintPitches.value = new Set();
   updateProgress({ ...transport.snapshot, beat: 0 });
+}
+
+/** 结算面板「再来一次」：关面板重开当前谱面（resetFollowProgress 会清结算状态） */
+function retryFromResults(): void {
+  resultsOpen.value = false;
+  startPlayback();
+}
+
+/** 结算面板「返回选曲」：只关面板，停在空闲态让用户挑下一首 */
+function closeResults(): void {
+  resultsOpen.value = false;
 }
 
 /**
@@ -1584,6 +1618,22 @@ onBeforeUnmount(() => {
         <span class="foot__item foot__item--state">{{ status.message }}</span>
       </div>
     </main>
+
+    <!-- Combo 连击：屏幕中央偏上，Perfect / Good 累加、Miss 归零；数字变化时弹跳一下 -->
+    <div v-if="followActive && comboCount > 0" class="combo-hud" aria-live="off">
+      <span :key="comboCount" class="combo-hud__num">{{ comboCount }}</span>
+      <span class="combo-hud__label">COMBO</span>
+    </div>
+
+    <!-- 成绩结算面板：跟弹播完（或手动停止）弹出 -->
+    <ResultPanel
+      :open="resultsOpen && playMode === 'follow'"
+      :total="currentNotesRef.length"
+      :counts="{ perfect: followStats.perfect, good: followStats.good, miss: followStats.miss }"
+      :max-combo="maxCombo"
+      @retry="retryFromResults"
+      @close="closeResults"
+    />
   </div>
 </template>
 
@@ -1898,6 +1948,47 @@ onBeforeUnmount(() => {
 .player__judge .grade-perfect { color: var(--qin-accent-strong); }
 .player__judge .grade-good { color: rgb(var(--qin-ink-rgb)); }
 .player__judge .grade-miss { color: var(--qin-danger-strong); }
+
+/* ---------------------------------------------------------------- Combo 连击 */
+.combo-hud {
+  position: fixed;
+  left: 50%;
+  top: 12%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  text-shadow: 0 0 14px rgba(var(--qin-accent-rgb), 0.55), 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.combo-hud__num {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 52px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--qin-accent-strong);
+  /* 每次数字变化（key 变了重挂元素）弹跳一下，增强打击感 */
+  animation: combo-pop 150ms cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+.combo-hud__label {
+  margin-top: 2px;
+  font-size: 12.5px;
+  letter-spacing: 0.4em;
+  text-indent: 0.4em;
+  color: rgba(var(--qin-ink-rgb), 0.72);
+}
+
+@keyframes combo-pop {
+  0% { transform: scale(1.32); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .combo-hud__num { animation: none; }
+}
 
 .player {
   display: flex;
